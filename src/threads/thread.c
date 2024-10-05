@@ -457,7 +457,7 @@ void
 thread_set_priority (int new_priority) 
 {
   thread_current ()->priority = new_priority;
-  restore_pri();
+  //restore_pri();
   swap_running_thread();
 }
 
