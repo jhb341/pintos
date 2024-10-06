@@ -35,9 +35,6 @@ struct inherit_manager
 
 };
 
-void manager_init_helper(struct thread *t, struct inherit_manager *m);
-
-//void inherit_manager_init(struct thread *t);
 
 
 /* A kernel thread or user process.
