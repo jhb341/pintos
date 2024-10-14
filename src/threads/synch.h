@@ -20,8 +20,6 @@ void sema_self_test (void);
 /*****************/
 int get_sema_pri(struct list_elem *e);
 bool cmp_sema_pri(struct list_elem *a, struct list_elem *b, void *aux);
-
-
 /*****************/
 
 
@@ -33,6 +31,8 @@ struct lock
   };
 
 void lock_init (struct lock *);
+
+
 void lock_acquire (struct lock *);
 bool lock_try_acquire (struct lock *);
 void lock_release (struct lock *);

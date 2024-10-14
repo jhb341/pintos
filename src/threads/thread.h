@@ -161,10 +161,13 @@ int thread_get_load_avg (void);
 /*****************/
 void thread_sleep(int64_t ticks);
 void thread_awake(int64_t ticks);
-
 bool cmp_pri(struct list_elem *a, struct list_elem *b, void *aux UNUSED);
 bool is_running_valid(void);
 void swap_running_thread_helper(void);
 void swap_running_thread(void);
+bool cmp_inheritor_pri(struct list_elem *x, struct list_elem *y, void *aux);
+void inherit_pri(void);
+void release_helper(struct lock *l);
+void restore_pri(void);
 
 #endif /* threads/thread.h */

@@ -185,6 +185,7 @@ lock_init (struct lock *lock)
   sema_init (&lock->semaphore, 1);
 }
 
+
 /* Acquires LOCK, sleeping until it becomes available if
    necessary.  The lock must not already be held by the current
    thread.
@@ -200,7 +201,16 @@ lock_acquire (struct lock *lock)
   ASSERT (!intr_context ());
   ASSERT (!lock_held_by_current_thread (lock));
 
+  struct thread *t = thread_current();
+  if(lock->holder != NULL){
+    t->manager.target_lock = lock;
+    list_insert_ordered(&lock->holder->manager.inheritor_list, &t->manager.inheritor, cmp_inheritor_pri, NULL);
+    inherit_pri();
+  }
+
+
   sema_down (&lock->semaphore);
+  t->manager.target_lock = NULL;
   lock->holder = thread_current ();
 }
 
@@ -234,6 +244,11 @@ lock_release (struct lock *lock)
 {
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
+
+  //remove_with_lock(lock);
+  //refresh_priority();
+  release_helper(lock);
+  restore_pri();
 
   lock->holder = NULL;
   sema_up (&lock->semaphore);
@@ -285,21 +300,7 @@ get_sema_pri(struct list_elem *e)
 bool
 cmp_sema_pri(struct list_elem *a, struct list_elem *b, void *aux UNUSED)
 {
-  /*
-  struct semaphore_elem *sema_a = list_entry(a, struct semaphore_elem, elem);
-  struct semaphore_elem *sema_b = list_entry(b, struct semaphore_elem, elem);
-
-  struct list *waiters_a = &(sema_a->semaphore.waiters);
-  struct list *waiters_b = &(sema_b->semaphore.waiters);
-
-  struct thread *root_a = list_entry(list_begin(waiters_a), struct thread, elem);
-  struct thread *root_b = list_entry(list_begin(waiters_b), struct thread, elem);
-
-  return root_a->priority > root_b->priority;
-  */
-
   bool flag = get_sema_pri(a) > get_sema_pri(b);
-
   return flag;
 }
 

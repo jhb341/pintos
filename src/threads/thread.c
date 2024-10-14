@@ -156,30 +156,55 @@ swap_running_thread(void)
   }
 }
 
-
-/*
-void
-manager_init_helper(struct thread *t, struct inherit_manager *m)
+// below - inversion..
+bool
+cmp_inheritor_pri(struct list_elem *x, struct list_elem *y, void *aux UNUSED)
 {
-  m->original_pri = t->priority;
-  m->current_pri = m->original_pri;
-  list_init(&m->inheritor_list);
-  m->target_lock = NULL;
+  return list_entry(x, struct thread, manager.inheritor)->priority > list_entry(y, struct thread, manager.inheritor)->priority;
 }
-*/
 
-/*
 void
-inherit_manager_init(struct thread *t)
+inherit_pri(void)
 {
- manager_init_helper(t, &t->manager);
+  int i;
+  struct thread *t = thread_current ();
+
+  for (i = 0; i < 8; i++){
+    if (!t->manager.target_lock) break;
+      struct thread *holder = t->manager.target_lock->holder;
+      holder->priority = t->priority;
+      t = holder;
+  }
 }
-*/
 
+void
+release_helper(struct lock *l)
+{
+  struct list_elem *e;
+  struct thread *t = thread_current();
 
+  for (e = list_begin (&t->manager.inheritor_list); e != list_end (&t->manager.inheritor_list); e = list_next (e)){
+    struct thread *t = list_entry (e, struct thread, manager.inheritor);
+    if (t->manager.target_lock == l)
+      list_remove (&t->manager.inheritor);
+  }
+}
+
+void
+restore_pri(void)
+{
+  struct thread *t = thread_current();
+  t->priority = t->manager.original_pri;
+
+  if (!list_empty (&t->manager.inheritor_list)) {
+    list_sort (&t->manager.inheritor_list, cmp_inheritor_pri, 0);
+
+    struct thread *nxt = list_entry (list_front (&t->manager.inheritor_list), struct thread, manager.inheritor);
+    if (nxt->priority > t->priority)
+      t->priority = nxt->priority;
+  }
+}
 /*****************/
-
-
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -457,7 +482,10 @@ void
 thread_set_priority (int new_priority) 
 {
   thread_current ()->priority = new_priority;
-  //restore_pri();
+
+  thread_current ()->manager.original_pri = new_priority;
+  restore_pri();  
+
   swap_running_thread();
 }
 
@@ -586,6 +614,16 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
   t->magic = THREAD_MAGIC;
+
+  //
+  //t->init_priority = priority;
+  //t->wait_on_lock = NULL;
+  //list_init(&(t->donations));
+
+  t->manager.original_pri = priority;
+  t->manager.target_lock = NULL;
+  list_init(&(t->manager.inheritor_list));
+
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
