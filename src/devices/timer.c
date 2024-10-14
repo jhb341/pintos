@@ -170,6 +170,18 @@ timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
   thread_tick ();
+
+  if (thread_mlfqs) {
+    mlfqs_incr_cpu();
+    if (ticks % 4 == 0) {
+      mlfqs_calc_pri2();
+      if (ticks % TIMER_FREQ == 0) {
+        mlfqs_calc_ld();
+        mlfqs_calc_cpu2();
+      }
+    }
+  }
+
   thread_awake(ticks);
 }
 

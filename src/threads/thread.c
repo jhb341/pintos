@@ -11,6 +11,7 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -59,6 +60,10 @@ static unsigned thread_ticks;   /* # of timer ticks since last yield. */
    Controlled by kernel command-line option "-o mlfqs". */
 bool thread_mlfqs;
 
+/* global variable for mlfqs */
+//int load_avg; // initialized at `thread_start`
+int load_avg;
+
 static void kernel_thread (thread_func *, void *aux);
 
 static void idle (void *aux UNUSED);
@@ -96,16 +101,6 @@ void
 thread_awake(int64_t ticks)
 {
   struct list_elem *e = list_begin (&blocked_list);
-  /*
-  while (e != list_end(&blocked_list)){
-    if( list_entry(e, struct thread, elem)->wakeup_tick <= ticks ){
-      e = list_remove(e);
-      thread_unblock( list_entry(e, struct thread, elem) );
-    }else{
-      e = list_next(e);
-    }
-  }
-  */
 
   while (e != list_end(&blocked_list)){
     struct thread *t = list_entry(e, struct thread, elem);
@@ -141,7 +136,7 @@ swap_running_thread_helper(void)
 {
   struct thread *c = thread_current();
   struct thread *r = list_entry(list_front(&ready_list), struct thread, elem);
-  if(c->priority < r->priority){
+  if( !intr_context() && c->priority < r->priority){
     thread_yield();
   }
 }
@@ -156,7 +151,7 @@ swap_running_thread(void)
   }
 }
 
-// below - inversion..
+
 bool
 cmp_inheritor_pri(struct list_elem *x, struct list_elem *y, void *aux UNUSED)
 {
@@ -204,7 +199,223 @@ restore_pri(void)
       t->priority = nxt->priority;
   }
 }
+
 /*****************/
+
+//////////////////////////////////////////////
+//                                          //
+//      mlfqs, floating point operator      //
+//                                          //
+//////////////////////////////////////////////
+int 
+calc_n_to_fp(int a, int b)
+{
+  (void)b;
+  return F * a;
+}
+
+int 
+calc_x_to_int_z(int a, int b)
+{
+  (void)b;
+  return a / F;
+}
+
+int 
+calc_x_to_int_n(int a, int b)
+{
+  (void)b;
+  if(a >= 0){
+    return (a + (F/ 2)) / F;
+  }else{
+    return (a - (F / 2)) / F;
+  }
+}
+
+int 
+calc_add_x_y(int a, int b)
+{
+  return a + b;
+}
+
+int 
+calc_add_x_n(int a, int b)
+{
+  return a + b*F;
+}
+
+int 
+calc_sub_y_x(int a, int b)
+{
+  return a - b;
+}
+
+int 
+calc_sub_n_x(int a, int b)
+{
+  return a - b*F;
+}
+
+int 
+calc_mul_x_n(int a, int b)
+{
+  return a * b;
+}
+
+int 
+calc_mul_x_y(int a, int b)
+{
+  int result;
+  result = (((int64_t) a) * b) / F;
+  return result;
+}
+
+int 
+calc_div_x_n(int a, int b)
+{
+  return a / b;
+}
+
+int 
+calc_div_x_y(int a, int b)
+{
+  int result;
+  result = (((int64_t) a) * F) / b;
+  return result;
+}
+
+binary_operation get_operation(enum calc_mode mode) {
+    switch (mode) {
+        case CONV_N_TO_FP:
+            return calc_n_to_fp;
+        case CONV_X_TO_INT_z:
+            return calc_x_to_int_z;
+        case CONV_X_TO_INT_n:
+            return calc_x_to_int_n;
+        case ADD_X_AND_Y:
+            return calc_add_x_y;
+        case ADD_X_AND_N:
+            return calc_add_x_n;
+        case SUB_Y_FROM_X:
+            return calc_sub_y_x;
+        case SUB_N_FROM_X:
+            return calc_sub_n_x;
+        case MUL_X_BY_N:
+            return calc_mul_x_n;
+        case MUL_X_BY_Y: 
+            return calc_mul_x_y;
+        case DIV_X_BY_N:
+            return calc_div_x_n;
+        case DIV_X_BY_Y: 
+            return calc_div_x_y;
+        default:    
+            return NULL;
+    }
+}
+
+int
+do_fp_calc(int x, int a, enum calc_mode mode)
+{
+  binary_operation operation = get_operation(mode);
+  if(operation != NULL){
+    return operation(x,a);
+  }else{
+    return 0;
+  }
+}
+
+
+void 
+mlfqs_calc_pri(struct thread *t)
+{
+  if(t == idle_thread){return;}
+  int calced_pri;
+  int u,v,x;
+  
+  u = do_fp_calc((t->recent_cpu),-4,DIV_X_BY_N);
+  v = PRI_MAX - 2 * (t->nice);
+  x = do_fp_calc(u,v,ADD_X_AND_N);
+  calced_pri = do_fp_calc(x,0,CONV_X_TO_INT_z);
+
+  t->priority = calced_pri;
+}
+
+void
+mlfqs_calc_pri2(void)
+{
+  struct list_elem *e;
+
+  for (e = list_begin (&all_list); e != list_end (&all_list); e = list_next (e)) {
+    struct thread *t = list_entry (e, struct thread, allelem);
+    mlfqs_calc_pri (t);
+  }
+}
+
+void mlfqs_calc_cpu(struct thread *t)
+{
+  if(t == idle_thread){return;}
+  int calced_cpu;
+  int u,v,w,x,y;
+
+  u = do_fp_calc(load_avg ,2,MUL_X_BY_N);
+  y = do_fp_calc(load_avg,2,MUL_X_BY_N);
+  v = do_fp_calc(y,1,ADD_X_AND_N);
+  w = do_fp_calc(u,v,DIV_X_BY_Y);
+  x = do_fp_calc(w,t->recent_cpu,MUL_X_BY_Y);
+  calced_cpu = do_fp_calc(x,t->nice ,ADD_X_AND_N);
+
+  t->recent_cpu = calced_cpu;
+}
+
+void
+mlfqs_calc_cpu2(void)
+{
+  struct list_elem *e;
+
+  for (e = list_begin (&all_list); e != list_end (&all_list); e = list_next (e)) {
+    struct thread *t = list_entry (e, struct thread, allelem);
+    mlfqs_calc_cpu (t);
+  }
+
+}
+
+
+void
+mlfqs_incr_cpu(void)
+{
+  if(thread_current() != idle_thread){
+    thread_current ()-> recent_cpu = do_fp_calc(thread_current()->recent_cpu,1,ADD_X_AND_N);
+  }
+}
+
+void
+mlfqs_calc_ld(void)
+{
+  int num_t;
+  int ld;
+  if(thread_current() == idle_thread){
+    num_t = list_size(&ready_list);
+  }else{
+    num_t = 1 + list_size(&ready_list);
+  }
+
+  int u, v, w, x, y;
+
+  u = do_fp_calc(59,0,CONV_N_TO_FP);
+  v = do_fp_calc(60,0,CONV_N_TO_FP);
+  w = do_fp_calc(u,v,DIV_X_BY_Y);
+  x = do_fp_calc(w,load_avg,MUL_X_BY_Y);
+
+  u = do_fp_calc(1,0,CONV_N_TO_FP);
+  //v = do_fp_calc(60,0,CONV_N_TO_FP);
+  w = do_fp_calc(u,v,DIV_X_BY_Y);
+  y = do_fp_calc(w,num_t,MUL_X_BY_N);
+
+  ld = do_fp_calc(x,y,ADD_X_AND_Y);
+
+  load_avg = ld;
+}
+
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -250,6 +461,8 @@ thread_start (void)
   struct semaphore idle_started;
   sema_init (&idle_started, 0);
   thread_create ("idle", PRI_MIN, idle, &idle_started);
+  //load_avg = LOAD_AVG_DEFAULT;
+  load_avg = LOAD_AVG_DEFAULT;
 
   /* Start preemptive thread scheduling. */
   intr_enable ();
@@ -481,11 +694,11 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-  thread_current ()->priority = new_priority;
+  if(thread_mlfqs){return;}
 
+  thread_current ()->priority = new_priority;
   thread_current ()->manager.original_pri = new_priority;
   restore_pri();  
-
   swap_running_thread();
 }
 
@@ -501,6 +714,11 @@ void
 thread_set_nice (int nice UNUSED) 
 {
   /* Not yet implemented. */
+  enum intr_level old_level = intr_disable ();
+  thread_current ()->nice = nice;
+  mlfqs_calc_pri(thread_current());
+  swap_running_thread ();
+  intr_set_level (old_level);
 }
 
 /* Returns the current thread's nice value. */
@@ -508,15 +726,23 @@ int
 thread_get_nice (void) 
 {
   /* Not yet implemented. */
-  return 0;
+  enum intr_level old_level = intr_disable ();
+  int nice = thread_current ()-> nice;
+  intr_set_level (old_level);
+  return nice;
 }
+
 
 /* Returns 100 times the system load average. */
 int
 thread_get_load_avg (void) 
 {
   /* Not yet implemented. */
-  return 0;
+  enum intr_level old_level = intr_disable ();
+  int load_avg_value = do_fp_calc(do_fp_calc(load_avg,100,MUL_X_BY_N),0,CONV_X_TO_INT_n);
+
+  intr_set_level (old_level);
+  return load_avg_value;
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
@@ -524,7 +750,10 @@ int
 thread_get_recent_cpu (void) 
 {
   /* Not yet implemented. */
-  return 0;
+  enum intr_level old_level = intr_disable ();
+  int recent_cpu = do_fp_calc(do_fp_calc(thread_current ()->recent_cpu,100,MUL_X_BY_N),0,CONV_X_TO_INT_n);
+  intr_set_level (old_level);
+  return recent_cpu;
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
@@ -615,14 +844,17 @@ init_thread (struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->magic = THREAD_MAGIC;
 
-  //
-  //t->init_priority = priority;
-  //t->wait_on_lock = NULL;
-  //list_init(&(t->donations));
 
+  /*  init manager */
   t->manager.original_pri = priority;
   t->manager.target_lock = NULL;
   list_init(&(t->manager.inheritor_list));
+
+  /* init manager2 */
+  //t->recent_cpu = RECENT_CPU_DEFAULT;
+  //t->nice = NICE_DEFAULT;
+  t->nice = NICE_DEFAULT;
+  t->recent_cpu = RECENT_CPU_DEFAULT;
 
 
   old_level = intr_disable ();

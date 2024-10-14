@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 
+
 /* States in a thread's life cycle. */
 enum thread_status
   {
@@ -23,7 +24,6 @@ typedef int tid_t;
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
-
 struct inherit_manager
 {
    int original_pri; /* 원래 스레드의 pri */
@@ -34,6 +34,57 @@ struct inherit_manager
    struct lock *target_lock; /* 내가 대기중인 lock */
 
 };
+            
+/* Values for Advance Scheduler */               
+#define NICE_DEFAULT 0
+#define RECENT_CPU_DEFAULT 0
+#define LOAD_AVG_DEFAULT 0
+struct mlfqs_manager
+{
+   int nice;
+   int cpu;
+};
+
+enum calc_mode
+{
+   CONV_N_TO_FP,        /* Convert n to fixed point */
+   CONV_X_TO_INT_z,     /* Convert x to integer(rounding toward 0) */
+   CONV_X_TO_INT_n,     /* Convert x to integer(rounding to nearest) */
+   ADD_X_AND_Y,         /* x + y */
+   ADD_X_AND_N,         /* x + n*f */
+   SUB_Y_FROM_X,        /* x - y */
+   SUB_N_FROM_X,        /* x - n*f */
+   MUL_X_BY_N,          /* x*n */
+   MUL_X_BY_Y,          
+   DIV_X_BY_N,
+   DIV_X_BY_Y
+};
+
+// 이항 연산 함수 타입 정의
+typedef int (*binary_operation)(int, int);
+#define F (1<<14)
+#define INT_MAX ((1<<31)-1)
+#define INT_MIN (-(1<<31))
+//
+
+int calc_n_to_fp(int a, int b);
+int calc_x_to_int_z(int a, int b);
+int calc_x_to_int_n(int a, int b);
+int calc_add_x_y(int a, int b);
+int calc_add_x_n(int a, int b);
+int calc_sub_y_x(int a, int b);
+int calc_sub_n_x(int a, int b);
+int calc_mul_x_n(int a, int b);
+int calc_mul_x_y(int a, int b);
+int calc_div_x_n(int a, int b);
+int calc_div_x_y(int a, int b);
+
+binary_operation get_operation(enum calc_mode mode);
+
+int do_fp_calc(int x, int a, enum calc_mode mode);
+
+
+//void manager_init_helper(struct thread *t, struct inherit_manager *m);
 
 
 
@@ -98,7 +149,12 @@ struct thread
 
    /*************************/
    int64_t wakeup_tick;
+   
    struct inherit_manager manager;
+   //struct mlfqs_manager manager2;
+
+   int nice;
+   int recent_cpu;
    /*************************/
 
     /* Owned by thread.c. */
@@ -125,6 +181,15 @@ struct thread
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 extern bool thread_mlfqs;
+
+//
+
+void mlfqs_calc_pri(struct thread *t);
+void mlfqs_calc_pri2(void);
+void mlfqs_calc_cpu(struct thread *t);
+void mlfqs_calc_cpu2(void);
+void mlfqs_incr_cpu(void);
+void mlfqs_calc_ld(void);
 
 void thread_init (void);
 void thread_start (void);

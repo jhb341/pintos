@@ -199,16 +199,18 @@ lock_acquire (struct lock *lock)
 {
   ASSERT (lock != NULL);
   ASSERT (!intr_context ());
-  ASSERT (!lock_held_by_current_thread (lock));
 
+  ASSERT (!lock_held_by_current_thread (lock));
   struct thread *t = thread_current();
+
   if(lock->holder != NULL){
     t->manager.target_lock = lock;
     list_insert_ordered(&lock->holder->manager.inheritor_list, &t->manager.inheritor, cmp_inheritor_pri, NULL);
+    
+    if(!thread_mlfqs){
     inherit_pri();
+    }
   }
-
-
   sema_down (&lock->semaphore);
   t->manager.target_lock = NULL;
   lock->holder = thread_current ();
@@ -245,12 +247,12 @@ lock_release (struct lock *lock)
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
 
-  //remove_with_lock(lock);
-  //refresh_priority();
-  release_helper(lock);
-  restore_pri();
-
   lock->holder = NULL;
+
+  if (!thread_mlfqs){
+    release_helper(lock);
+    restore_pri();
+  }
   sema_up (&lock->semaphore);
 }
 
@@ -301,6 +303,7 @@ bool
 cmp_sema_pri(struct list_elem *a, struct list_elem *b, void *aux UNUSED)
 {
   bool flag = get_sema_pri(a) > get_sema_pri(b);
+
   return flag;
 }
 
@@ -340,7 +343,6 @@ cond_wait (struct condition *cond, struct lock *lock)
   ASSERT (lock_held_by_current_thread (lock));
   
   sema_init (&waiter.semaphore, 0);
-  //list_push_back (&cond->waiters, &waiter.elem);
   list_insert_ordered(&cond->waiters, &waiter.elem, cmp_sema_pri, 0);
   lock_release (lock);
   sema_down (&waiter.semaphore);
