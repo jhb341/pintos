@@ -213,15 +213,87 @@ make_gdtr_operand 함수는 GDT register 를 가져오는 함수로 GDT 의 크�
 
 (수정 필요: 그래서 processor execution 순서어떻게 되는지 설명? 위에는 그냥 다 initiation 밖에 없는것 같은데..?) 
 
-how to call syscall_handler() in userprog syscall.c(나중에 지우기)
-“lib/user/syscall.c”, “threads/intr-stubs.S”, “threads/interrupt.c”(나중에 지우기)
+### System call 
+
+(수정 필요: /thread/interrupt.c 파일 내의 함수 추가 필요..??) 
+
+초반에 설명한 Pintos의 main entry point인 pintos_init 함수에 나와 있는 exception_init()과 syscall_init() 함수에 대해 알아보았다. 먼저, 아래의 syscall_init 함수를 보면 intr_register_init 함수를 호출해 syscall interrupt를 등록했다. 그리고 intr_register_int 함수를 호출했다.
+
 ```
  void
  syscall_init (void) 
  {
    intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
  }
+```
+
+intr_register_init 함수는 vector number, dpl, level, handler 포인터, 그리고 이름을 argument로 받아온 다음, 유효한 벡터 값인지 확인한 후 다시 register_handler 함수로 변수들을 넘겨주었다. 이 intr_register_init 함수는 아래에서 설명할 exception_init에서도 사용된다.
+
+register_handler에서는 interrupt 혹은 exception이 발생했을 때, 각 vector number에 맞는 interrupt/exception handler를 IDT (Interrupt Descriptor Table)에 등록하는 함수였다. 만약 interrupt가 활성화된 상태에서 처리해야 한다면 make_trap_gate 함수를 통해 IDT 엔트리를 설정하고, 그렇지 않다면 make_intr_gate 함수를 통해 CPU가 interrupt를 비활성화한 상태에서 handler를 실행한다.
+
+```
+ void
+ intr_register_int (uint8_t vec_no, int dpl, enum intr_level level,
+                    intr_handler_func *handler, const char *name)
+ {
+   ASSERT (vec_no < 0x20 || vec_no > 0x2f);
+   register_handler (vec_no, dpl, level, handler, name);
+ }
+
+static void
+ register_handler (uint8_t vec_no, int dpl, enum intr_level level,
+                   intr_handler_func *handler, const char *name)
+ {
+   ASSERT (intr_handlers[vec_no] == NULL);
+   if (level == INTR_ON)
+     idt[vec_no] = make_trap_gate (intr_stubs[vec_no], dpl);
+   else
+     idt[vec_no] = make_intr_gate (intr_stubs[vec_no], dpl);
+   intr_handlers[vec_no] = handler;
+   intr_names[vec_no] = name;
+ }
+```
+
+위에서 설명했듯이, make_trap_gate와 make_intr_gate는 interrupt 활성화/비활성화의 차이를 가진다. 하지만 내부 로직을 보면, 두 함수 모두 make_gate 함수를 호출한다. make_gate 함수는 위에서 넘겨준 인자들로 64비트인 gate descriptor를 생성해 반환해준다. 이 descriptor는 IDT에 추가될 것이다.
+
+```
+ static uint64_t
+ make_trap_gate (void (*function) (void), int dpl)
+ {
+   return make_gate (function, dpl, 15);
+ }
+
+ static uint64_t
+ make_intr_gate (void (*function) (void), int dpl)
+ {
+   return make_gate (function, dpl, 14);
+ }
+
+ static uint64_t
+ make_gate (void (*function) (void), int dpl, int type)
+ {
+   uint32_t e0, e1;
   
+   ASSERT (function != NULL);
+   ASSERT (dpl >= 0 && dpl <= 3);
+   ASSERT (type >= 0 && type <= 15);
+  
+   e0 = (((uint32_t) function & 0xffff)     /**< Offset 15:0. */
+         | (SEL_KCSEG << 16));              /**< Target code segment. */
+  
+   e1 = (((uint32_t) function & 0xffff0000) /**< Offset 31:16. */
+         | (1 << 15)                        /**< Present. */
+         | ((uint32_t) dpl << 13)           /**< Descriptor privilege level. */
+         | (0 << 12)                        /**< System. */
+         | ((uint32_t) type << 8));         /**< Gate type. */
+  
+   return e0 | ((uint64_t) e1 << 32);
+ }
+```
+
+Pintos에서 system call이 발생하면, 아래의 syscall_handler 함수가 실행된다. 현재 함수를 보면, 단순히 system call이 발생했다는 것을 알리기 위해 printf를 사용해 메시지를 출력하고, thread_exit 함수를 이용해 해당 thread를 종료해주었다.
+
+```
  static void
  syscall_handler (struct intr_frame *f UNUSED) 
  {
@@ -230,7 +302,67 @@ how to call syscall_handler() in userprog syscall.c(나중에 지우기)
  }
 ```
 
-초반에 설명한 pintos의 main entry point 인 pintos_init 함수에 나와있는 exeception_init()과 syscall_init() 함수에 대해서 알아볼 것이다. 
+아래의 exception_init 함수를 보면, 위에서 설명한 intr_register_init 함수를 이용해 각 exception을 처리하는 handler들을 IDT에 추가하는 역할을 한다. 
+
+```
+void
+ exception_init (void) 
+ {
+   /* These exceptions can be raised explicitly by a user program,
+      e.g. via the INT, INT3, INTO, and BOUND instructions.  Thus,
+      we set DPL==3, meaning that user programs are allowed to
+      invoke them via these instructions. */
+   intr_register_int (3, 3, INTR_ON, kill, "#BP Breakpoint Exception");
+   intr_register_int (4, 3, INTR_ON, kill, "#OF Overflow Exception");
+   intr_register_int (5, 3, INTR_ON, kill,
+                      "#BR BOUND Range Exceeded Exception");
+  
+   /* These exceptions have DPL==0, preventing user processes from
+      invoking them via the INT instruction.  They can still be
+      caused indirectly, e.g. #DE can be caused by dividing by
+      0.  */
+   intr_register_int (0, 0, INTR_ON, kill, "#DE Divide Error");
+   intr_register_int (1, 0, INTR_ON, kill, "#DB Debug Exception");
+   intr_register_int (6, 0, INTR_ON, kill, "#UD Invalid Opcode Exception");
+   intr_register_int (7, 0, INTR_ON, kill,
+                      "#NM Device Not Available Exception");
+   intr_register_int (11, 0, INTR_ON, kill, "#NP Segment Not Present");
+   intr_register_int (12, 0, INTR_ON, kill, "#SS Stack Fault Exception");
+   intr_register_int (13, 0, INTR_ON, kill, "#GP General Protection Exception");
+   intr_register_int (16, 0, INTR_ON, kill, "#MF x87 FPU Floating-Point Error");
+   intr_register_int (19, 0, INTR_ON, kill,
+                      "#XF SIMD Floating-Point Exception");
+  
+   /* Most exceptions can be handled with interrupts turned on.
+      We need to disable interrupts for page faults because the
+      fault address is stored in CR2 and needs to be preserved. */
+   intr_register_int (14, 0, INTR_OFF, page_fault, "#PF Page-Fault Exception");
+ }
+```
+
+(수정 필요: intr-stubs.S라는 어셈블리 파일 설명 적어야됨) 
+
+```
+ #ifndef THREADS_INTR_STUBS_H
+ #define THREADS_INTR_STUBS_H
+  
+ /** Interrupt stubs.
+  
+    These are little snippets of code in intr-stubs.S, one for
+    each of the 256 possible x86 interrupts.  Each one does a
+    little bit of stack manipulation, then jumps to intr_entry().
+    See intr-stubs.S for more information.
+  
+    This array points to each of the interrupt stub entry points
+    so that intr_init() can easily find them. */
+ typedef void intr_stub_func (void);
+ extern intr_stub_func *intr_stubs[256];
+  
+ /** Interrupt return path. */
+ void intr_exit (void);
+  
+ #endif /**< threads/intr-stubs.h */
+```
 
 structure(file, inode), functions(need to implement system call) of the file system (나중에 지우기)
 (“filesys/ file.c”, “filesys/ inode.c” “filesys/filesys.c”)(나중에 지우기)
@@ -243,4 +375,5 @@ data structure and detailed algorithm (나중에 지우기)
 1. process termination messages
 2. argument passing
 3. system call
+   -> syscall_handler 함수 수정? 
 4. denying writes to executables 
