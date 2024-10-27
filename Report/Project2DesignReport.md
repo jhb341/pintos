@@ -1,4 +1,4 @@
-# CSED 312 Project 1 Design Report 
+# CSED 312 Project 2 Design Report 
 김지현(20220302) \
 전현빈(20220259)
 
