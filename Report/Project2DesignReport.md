@@ -6,7 +6,8 @@
 procedure of process execution - thread init.c and userprog process.c (나중에 지우기)
 
 ### 1. Process execution 
-핀토스가 실행되고 나서 user program 이 어떻게 시작되는지 확인하기 위해서 pintos main entry point 를 확인해보았다. 아래의 코드를 보면 #ifdef USERPROG 부분을 보면 USERPROG 매크로가 정의되어 있는 경우에만 user program과 관련된 초기화 코드가 컴파일된다. 
+
+Pintos가 실행된 후 user program이 어떻게 시작되는지 확인하기 위해, Pintos의 main entry point를 확인해보았다. 아래 코드에서 #ifdef USERPROG 부분을 보았을 때, USERPROG 매크로가 정의된 경우에만 user program과 관련된 초기화 코드가 컴파일된다는 것을 확인했다.
 
 ```
 int
@@ -32,7 +33,9 @@ int
  }
 ```
 
-user program 초기화 과정을 확인하기 위해 먼저 tss_init() 함수와 gdt_init() 함수에 대해서 알아볼 것이다. 먼저, tss 의 구조체를 설명하자면, tss 는 "task state segment 를 정의하는 구조체로, kernel mode 와 user mode 사이에 context switch 할 때 필요하다. (설명 더 필요) 
+user program 초기화 과정을 확인하기 위해 먼저 tss_init() 함수와 gdt_init() 함수에 대해 알아보았다. 먼저, TSS의 구조체를 설명하자면, TSS는 "Task State Segment"를 정의하는 구조체로, kernel mode와 user mode 사이에서 context switch가 일어날 때 필요하다. 각 context 상태인 레지스터 값, 스택 포인터 등을 저장하고 복원하는 데 사용된다. 현재 사용되는 x86 OS에서는 이러한 TSS 기능이 거의 사용되지 않지만, user mode에서 interrupt가 발생하여 kernel mode로 전환될 때는 TSS가 사용된다.
+
+아래 구조체의 각 변수와 포인터들을 확인해보면, 먼저 back_link는 이전 context의 TSS 세그먼트를 가리킨다. (esp0, ss0, esp1, ss1... 모르겠음??) eip는 context switch가 되고 난 다음 실행할 instruction을 가리키는 포인터이다. (eflags 모르겠음?? 플래그 상태?) 이후 프로세서의 레지스터 값(eax, ..., edi)을 저장한다. 이 값들은 나중에 다시 현재 context로 switch될 때 사용될 것이다. (segment selector, ldt, trace 모르겠음)
 
 ```
 struct tss
@@ -60,7 +63,7 @@ struct tss
    };
 ```
 
-
+pintos_init 함수에서 사용된 tss_init 함수는 위에서 소개한 TSS를 초기화하는 함수였다. 먼저 palloc을 사용해 TSS를 위한 메모리를 할당했다. 그리고 kernel mode에서 사용하는 stack segment selector인 ss0을 SEL_KDSEG로 초기화해주었다. SEL_KDSEG는 kernel data segment를 가리킨다고 한다. 그 다음, I/O 접근을 허용하거나 제한할 때 사용하는 bitmask인 bitmap을 0xdfff로 초기화해주었다. 이후 아래에서 설명한 tss_update 함수를 통해 현재 TSS의 esp0 값을 업데이트해주었다. esp0은 kernel mode stack pointer로, user mode에서 kernel mode로 전환될 때 사용할 stack 위치를 설정해준다. kernel mode에서는 stack이 위에서 아래로 쌓이기 때문에 esp0에는 현재 thread 주소에 PGSIZE를 더해 최상단 주소를 저장해주었다.
 
 ```
 void
@@ -74,8 +77,16 @@ void
    tss->bitmap = 0xdfff;
    tss_update ();
  }
+
+ void
+ tss_update (void) 
+ {
+   ASSERT (tss != NULL);
+   tss->esp0 = (uint8_t *) thread_current () + PGSIZE;
+ }
 ```
 
+추가적으로, tss_get 함수는 현재 TSS의 포인터를 반환하는 역할을 하는 함수이다. 
 
 ```
 struct tss *
@@ -86,17 +97,138 @@ struct tss *
  }
 ```
 
+TSS를 초기화해준 다음 gdt를 초기화해주기 때문에, 이번에는 gdt에 대해서 알아보았다. GDT (Global Descriptor Table)는 code, data, 그리고 TSS로 구성된 메모리 세그먼트를 저장하는 테이블이다. 아래의 gdt_init 함수를 보면, 이후에 설명할 함수들을 이용해 kernel의 code, data 등을 테이블에 추가하는 것을 볼 수 있었다. 먼저 null을 넣는데, 이는 CPU가 잘못된 세그먼트를 참조할 때를 대비해 null을 가장 먼저 추가한 것이다. 그 다음으로, kernel code segment, kernel data segment, user code segment, user data segment, 마지막으로 TSS를 추가해주었다. 이후 해당 GDT의 크기와 주소를 저장하는 GDTR (GDT register) 값을 저장한 다음, 어셈블리 명령어를 통해 CPU가 GDT와 TSS를 알 수 있도록 했다. 이 함수는 아래에서 다시 설명할 것이다.
+
 ```
+ static uint64_t gdt[SEL_CNT];
+
+ /** Sets up a proper GDT.  The bootstrap loader's GDT didn't
+    include user-mode selectors or a TSS, but we need both now. */
  void
- tss_update (void) 
+ gdt_init (void)
  {
-   ASSERT (tss != NULL);
-   tss->esp0 = (uint8_t *) thread_current () + PGSIZE;
+   uint64_t gdtr_operand;
+  
+   /* Initialize GDT. */
+   gdt[SEL_NULL / sizeof *gdt] = 0;
+   gdt[SEL_KCSEG / sizeof *gdt] = make_code_desc (0);
+   gdt[SEL_KDSEG / sizeof *gdt] = make_data_desc (0);
+   gdt[SEL_UCSEG / sizeof *gdt] = make_code_desc (3);
+   gdt[SEL_UDSEG / sizeof *gdt] = make_data_desc (3);
+   gdt[SEL_TSS / sizeof *gdt] = make_tss_desc (tss_get ());
+  
+   /* Load GDTR, TR.  See [IA32-v3a] 2.4.1 "Global Descriptor
+      Table Register (GDTR)", 2.4.4 "Task Register (TR)", and
+      6.2.4 "Task Register".  */
+   gdtr_operand = make_gdtr_operand (sizeof gdt - 1, gdt);
+   asm volatile ("lgdt %0" : : "m" (gdtr_operand));
+   asm volatile ("ltr %w0" : : "q" (SEL_TSS));
  }
 ```
 
+위의 설명에서 kernel/user code segment와 data segment를 정의하는 함수들로 make_seg_desc 함수를 사용해 GDT에 추가될 entry를 생성했다. 여기서 함수 인자로 dpl(descriptor privilege level)을 받아오는데, 이는 각각 kernel(0)과 user(3) mode를 확인하기 위한 것이다.
+
+```
+ static uint64_t
+ make_code_desc (int dpl)
+ {
+   return make_seg_desc (0, 0xfffff, CLS_CODE_DATA, 10, dpl, GRAN_PAGE);
+ }
+
+ static uint64_t
+ make_data_desc (int dpl)
+ {
+   return make_seg_desc (0, 0xfffff, CLS_CODE_DATA, 2, dpl, GRAN_PAGE);
+ }
+```
+
+make_seg_desc 함수를 보면, 입력으로 받아오는 base, limit, class type, dpl, granularity를 GDT에 들어갈 64비트로 저장해 반환하는 역할을 했다. 32비트인 e0과 e1에 나눠서 저장한 다음, 둘을 합쳐 64비트로 반환했다. e0에는 limit의 하위 16비트와 base의 하위 16비트를 저장했고, e1에는 base의 중간 8비트, type, class, dpl, limit의 상위 4비트, granularity, 그리고 base의 상위 8비트를 저장했다. 여기서 말하는 type 은 segment 의 유형을 나타내는 변수로 read/write 이 가능한지 등을 알려준다. 그리고 class 는 segment 의 클래스로 code/data 인지 system 인지를 확인할 때 필요하다. 
+(왜 32bit 로 두개로 나눠서 하는지 설명?? 수정 필요) 
+
+```
+ enum seg_class
+   {
+     CLS_SYSTEM = 0,             /**< System segment. */
+     CLS_CODE_DATA = 1           /**< Code or data segment. */
+   };
+
+ enum seg_granularity
+   {
+     GRAN_BYTE = 0,              /**< Limit has 1-byte granularity. */
+     GRAN_PAGE = 1               /**< Limit has 4 kB granularity. */
+   };
+
+ static uint64_t
+ make_seg_desc (uint32_t base,
+                uint32_t limit,
+                enum seg_class class,
+                int type,
+                int dpl,
+                enum seg_granularity granularity)
+ {
+   uint32_t e0, e1;
+  
+   ASSERT (limit <= 0xfffff);
+   ASSERT (class == CLS_SYSTEM || class == CLS_CODE_DATA);
+   ASSERT (type >= 0 && type <= 15);
+   ASSERT (dpl >= 0 && dpl <= 3);
+   ASSERT (granularity == GRAN_BYTE || granularity == GRAN_PAGE);
+  
+   e0 = ((limit & 0xffff)             /**< Limit 15:0. */
+         | (base << 16));             /**< Base 15:0. */
+  
+   e1 = (((base >> 16) & 0xff)        /**< Base 23:16. */
+         | (type << 8)                /**< Segment type. */
+         | (class << 12)              /**< 0=system, 1=code/data. */
+         | (dpl << 13)                /**< Descriptor privilege. */
+         | (1 << 15)                  /**< Present. */
+         | (limit & 0xf0000)          /**< Limit 16:19. */
+         | (1 << 22)                  /**< 32-bit segment. */
+         | (granularity << 23)        /**< Byte/page granularity. */
+         | (base & 0xff000000));      /**< Base 31:24. */
+  
+   return e0 | ((uint64_t) e1 << 32);
+ }
+```
+
+그리고 TSS를 GDT에 넣을 때, 아래의 make_tss_desc 함수를 통해 추가했다. 이 함수에서도 위에서 설명한 make_seg_desc 함수를 통해 entry를 생성했다.
+
+```
+ static uint64_t
+ make_tss_desc (void *laddr)
+ {
+   return make_seg_desc ((uint32_t) laddr, 0x67, CLS_SYSTEM, 9, 0, GRAN_BYTE);
+ }
+```
+
+make_gdtr_operand 함수는 GDT register 를 가져오는 함수로 GDT 의 크기인 limit 과 시작 주소인 base 를 반환해준다. 
+
+```
+ static uint64_t
+ make_gdtr_operand (uint16_t limit, void *base)
+ {
+   return limit | ((uint64_t) (uint32_t) base << 16);
+ }
+```
+
+(수정 필요: 그래서 processor execution 순서어떻게 되는지 설명? 위에는 그냥 다 initiation 밖에 없는것 같은데..?) 
+
 how to call syscall_handler() in userprog syscall.c(나중에 지우기)
 “lib/user/syscall.c”, “threads/intr-stubs.S”, “threads/interrupt.c”(나중에 지우기)
+```
+ void
+ syscall_init (void) 
+ {
+   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
+ }
+  
+ static void
+ syscall_handler (struct intr_frame *f UNUSED) 
+ {
+   printf ("system call!\n");
+   thread_exit ();
+ }
+```
 
 초반에 설명한 pintos의 main entry point 인 pintos_init 함수에 나와있는 exeception_init()과 syscall_init() 함수에 대해서 알아볼 것이다. 
 
