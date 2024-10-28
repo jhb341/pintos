@@ -11,7 +11,7 @@ Pintos가 실행된 후 user program이 어떻게 시작되는지 확인하기 �
 
 ```
 int
- pintos_init (void)
+ main (void)
  {
   '''
    /* Segmentation. */
