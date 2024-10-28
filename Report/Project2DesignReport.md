@@ -454,8 +454,6 @@ void
 ```
 
 ### File System 
-structure(file, inode), functions(need to implement system call) of the file system (나중에 지우기)
-(“filesys/ file.c”, “filesys/ inode.c” “filesys/filesys.c”)(나중에 지우기)
 
 ![image](https://github.com/user-attachments/assets/fdd3c960-c2ec-4e6a-a820-38a7e4cb022d)\
 (뭔가 이런 느낌의 disk 와 sector 설명하는 그림 들어가면 좋을 것 같음, 나중에 지우기) 
@@ -1236,6 +1234,7 @@ filesys_remove (const char *name)
 
 dir_remove 함수는 name을 갖는 디렉토리 엔트리를 삭제하는 역할을 한다. dir_lookup 함수와 유사하게, lookup 함수를 통해 해당 엔트리를 찾고 inode를 연 후, inode_write_at 함수를 사용해 디렉토리 엔트리 삭제 상태를 업데이트한다. 이후, inode_remove와 inode_close 함수를 통해 해당 inode를 삭제하고 닫아준다. 마지막으로, 삭제 작업의 성공 여부를 반환한다.
 
+```
 bool
 dir_remove (struct dir *dir, const char *name) 
 {
@@ -1269,6 +1268,7 @@ dir_remove (struct dir *dir, const char *name)
   inode_close (inode);
   return success;
 }
+```
 
 ## Design Implementation 
 how to solve problems (나중에 지우기)
