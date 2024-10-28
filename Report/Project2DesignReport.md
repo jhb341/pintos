@@ -33,7 +33,7 @@ int
  }
 ```
 
-user program 초기화 과정을 확인하기 위해 먼저 tss_init() 함수와 gdt_init() 함수에 대해 알아보았다. 먼저, TSS의 구조체를 설명하자면, TSS는 "Task State Segment"를 정의하는 구조체로, kernel mode와 user mode 사이에서 context switch가 일어날 때 필요하다. 각 context 상태인 레지스터 값, 스택 포인터 등을 저장하고 복원하는 데 사용된다. 현재 사용되는 x86 OS에서는 이러한 TSS 기능이 거의 사용되지 않지만, user mode에서 interrupt가 발생하여 kernel mode로 전환될 때는 TSS가 사용된다.
+user program 초기화 과정을 확인하기 위해 먼저 tss_init() 함수와 gdt_init() 함수에 대해 알아보았다. TSS구조체와 이를 초기화하는 `tss_init()`은 ~src/userprog/tss.c에 구현되어 있다. 먼저, TSS의 구조체를 설명하자면, TSS는 "Task State Segment"를 정의하는 구조체로, kernel mode와 user mode 사이에서 context switch가 일어날 때 필요하다. 각 context 상태인 레지스터 값, 스택 포인터 등을 저장하고 복원하는 데 사용된다. 현재 사용되는 x86 OS에서는 이러한 TSS 기능이 거의 사용되지 않지만, user mode에서 interrupt가 발생하여 kernel mode로 전환될 때는 TSS가 사용된다.
 
 아래 구조체의 각 변수와 포인터들을 확인해보면, 먼저 back_link는 이전 context의 TSS 세그먼트를 가리킨다. (esp0, ss0, esp1, ss1... 모르겠음??) eip는 context switch가 되고 난 다음 실행할 instruction을 가리키는 포인터이다. (eflags 모르겠음?? 플래그 상태?) 이후 프로세서의 레지스터 값(eax, ..., edi)을 저장한다. 이 값들은 나중에 다시 현재 context로 switch될 때 사용될 것이다. (segment selector, ldt, trace 모르겠음)
 
@@ -63,7 +63,7 @@ struct tss
    };
 ```
 
-pintos_init 함수에서 사용된 tss_init 함수는 위에서 소개한 TSS를 초기화하는 함수였다. 먼저 palloc을 사용해 TSS를 위한 메모리를 할당했다. 그리고 kernel mode에서 사용하는 stack segment selector인 ss0을 SEL_KDSEG로 초기화해주었다. SEL_KDSEG는 kernel data segment를 가리킨다고 한다. 그 다음, I/O 접근을 허용하거나 제한할 때 사용하는 bitmask인 bitmap을 0xdfff로 초기화해주었다. 이후 아래에서 설명한 tss_update 함수를 통해 현재 TSS의 esp0 값을 업데이트해주었다. esp0은 kernel mode stack pointer로, user mode에서 kernel mode로 전환될 때 사용할 stack 위치를 설정해준다. kernel mode에서는 stack이 위에서 아래로 쌓이기 때문에 esp0에는 현재 thread 주소에 PGSIZE를 더해 최상단 주소를 저장해주었다.
+main 함수에서 사용된 tss_init 함수는 위에서 소개한 TSS를 초기화하는 함수였다. 먼저 palloc을 사용해 TSS를 위한 메모리를 할당했다. 그리고 kernel mode에서 사용하는 stack segment selector인 ss0을 SEL_KDSEG로 초기화해주었다. SEL_KDSEG는 kernel data segment를 가리킨다고 한다. 그 다음, I/O 접근을 허용하거나 제한할 때 사용하는 bitmask인 bitmap을 0xdfff로 초기화해주었다. 이후 아래에서 설명한 tss_update 함수를 통해 현재 TSS의 esp0 값을 업데이트해주었다. esp0은 kernel mode stack pointer로, user mode에서 kernel mode로 전환될 때 사용할 stack 위치를 설정해준다. kernel mode에서는 stack이 위에서 아래로 쌓이기 때문에 esp0에는 현재 thread 주소에 PGSIZE를 더해 최상단 주소를 저장해주었다.
 
 ```
 void
@@ -97,7 +97,7 @@ struct tss *
  }
 ```
 
-TSS를 초기화해준 다음 gdt를 초기화해주기 때문에, 이번에는 gdt에 대해서 알아보았다. GDT (Global Descriptor Table)는 code, data, 그리고 TSS로 구성된 메모리 세그먼트를 저장하는 테이블이다. 아래의 gdt_init 함수를 보면, 이후에 설명할 함수들을 이용해 kernel의 code, data 등을 테이블에 추가하는 것을 볼 수 있었다. 먼저 null을 넣는데, 이는 CPU가 잘못된 세그먼트를 참조할 때를 대비해 null을 가장 먼저 추가한 것이다. 그 다음으로, kernel code segment, kernel data segment, user code segment, user data segment, 마지막으로 TSS를 추가해주었다. 이후 해당 GDT의 크기와 주소를 저장하는 GDTR (GDT register) 값을 저장한 다음, 어셈블리 명령어를 통해 CPU가 GDT와 TSS를 알 수 있도록 했다. 이 함수는 아래에서 다시 설명할 것이다.
+TSS를 초기화해준 다음 gdt를 초기화해주기 때문에, 이번에는 gdt에 대해서 알아보았다. GDT (Global Descriptor Table)는 code, data, 그리고 TSS로 구성된 메모리 세그먼트를 저장하는 테이블이다. ~src/userprog/gdt.c에 구현된 gdt_init 함수를 보면, 이후에 설명할 함수들을 이용해 kernel의 code, data 등을 테이블에 추가하는 것을 볼 수 있었다. 먼저 null을 넣는데, 이는 CPU가 잘못된 세그먼트를 참조할 때를 대비해 null을 가장 먼저 추가한 것이다. 그 다음으로, kernel code segment, kernel data segment, user code segment, user data segment, 마지막으로 TSS를 추가해주었다. 이후 해당 GDT의 크기와 주소를 저장하는 GDTR (GDT register) 값을 저장한 다음, 어셈블리 명령어를 통해 CPU가 GDT와 TSS를 알 수 있도록 했다. 이 함수는 아래에서 다시 설명할 것이다.
 
 ```
  static uint64_t gdt[SEL_CNT];
@@ -212,6 +212,95 @@ make_gdtr_operand 함수는 GDT register 를 가져오는 함수로 GDT 의 크�
 ```
 
 (수정 필요: 그래서 processor execution 순서어떻게 되는지 설명? 위에는 그냥 다 initiation 밖에 없는것 같은데..?) 
+
+여기까지에 대한 내용은 main()에서의 초기화 과정에 대한 설명이다. 지금부터는 실제 유저프로그램의 실행과정에 대해 알아보겠다.
+user program의 entry point는 ~src/lib/user/entry.c에 구현된 `_start`이다. 
+
+```
+// entry.c
+...
+
+void
+_start (int argc, char *argv[]) 
+{
+  exit (main (argc, argv));
+}
+
+...
+
+```
+
+`_start`는 argc, argv를 입력받아 `main`에 이를 전달하고 main이 return하면 `exit`을 호출하여 종료한다. 이때 argv는 main함수가 전달받은 인자 각각이며 argc는 이러한 argv의 수이다. main함수는 이처럼 argv, argc를 전달받고 적절한 초기화 과정을 거친 후 `run_action(argv)`를 통해 argv를 실행하고 종료한다.
+
+```
+// init.c
+// int main(void)
+...
+
+  printf ("Boot complete.\n");
+  
+  /* Run actions specified on kernel command line. */
+  run_actions (argv);
+
+  /* Finish up. */
+  shutdown ();
+  thread_exit ();
+
+...
+
+```
+
+동일한 init.c에 구현된 `run_actions`에서는 전달받은 argv에 관한 정보를 아래와 같이 action이라는 구조체로 관리한다.
+
+```
+// init.c
+// static void run_actions(char **argv)
+...
+
+  struct action 
+    {
+      char *name;                       /* Action name. */
+      int argc;                         /* # of args, including action name. */
+      void (*function) (char **argv);   /* Function to execute action. */
+    };
+
+  static const struct action actions[] = 
+    {
+      {"run", 2, run_task},
+#ifdef FILESYS
+    /* 이 부분은 FILESYS에 대한 부분이므로 생략한다. */
+#endif
+      {NULL, 0, NULL},
+    };
+...
+
+```
+
+입력된 명령이 run인 경우라면, action구조체는 `run_task`에 argv를 전달하여 실행한다. `run_task`또한 동일한 init.c에 구현되어있다.
+
+```
+/* Runs the task specified in ARGV[1]. */
+static void
+run_task (char **argv)
+{
+  const char *task = argv[1];
+  
+  printf ("Executing '%s':\n", task);
+#ifdef USERPROG
+  process_wait (process_execute (task));
+#else
+  run_test (task);
+#endif
+  printf ("Execution of '%s' complete.\n", task);
+}
+
+```
+
+pintos 주석에 쓰여진 바와 같이, run task는 argv[argc]에 저장된 명령중 argv[1]을 시행한다. 이때 argv[0]은 run이기 때문이다. 
+
+
+
+
 
 ### System call 
 
