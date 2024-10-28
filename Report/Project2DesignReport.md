@@ -364,8 +364,640 @@ void
  #endif /**< threads/intr-stubs.h */
 ```
 
+### File System 
 structure(file, inode), functions(need to implement system call) of the file system (나중에 지우기)
 (“filesys/ file.c”, “filesys/ inode.c” “filesys/filesys.c”)(나중에 지우기)
+
+![image](https://github.com/user-attachments/assets/fdd3c960-c2ec-4e6a-a820-38a7e4cb022d)
+(뭔가 이런 느낌의 disk 와 sector 설명하는 그림 들어가면 좋을 것 같음, 나중에 지우기) 
+
+먼저, file system의 주요 구조체 세 가지에 대해 알아보았다. 첫 번째로, inode 구조체는 file system에서 파일이나 디렉토리 정보를 저장하는 역할을 한다. elem은 여러 inode를 연결한 리스트 요소이며, sector는 해당 inode가 디스크의 어떤 섹터에 저장되어 있는지를 나타내는 정수값이다. open_cnt는 현재 열려 있는 inode의 개수를 나타내며, 이는 파일이나 디렉토리가 몇 번 열려 있는지를 알려준다. removed는 해당 inode가 삭제되었는지 여부를 나타내며, deny_write_cnt는 파일에 대한 쓰기 작업 허용 여부를 관리하는 변수이다. 마지막으로, data는 아래에서 설명할 inode_disk 구조체를 가리키는 변수로, 실제 파일의 데이터를 저장한다.
+
+```
+struct inode 
+  {
+    struct list_elem elem;              /* Element in inode list. */
+    block_sector_t sector;              /* Sector number of disk location. */
+    int open_cnt;                       /* Number of openers. */
+    bool removed;                       /* True if deleted, false otherwise. */
+    int deny_write_cnt;                 /* 0: writes ok, >0: deny writes. */
+    struct inode_disk data;             /* Inode content. */
+  };
+```
+
+inode_disk 구조체는 앞서 언급한 대로 inode의 내용을 저장하는 구조체이다. start는 파일이 저장된 디스크의 첫 번째 섹터를 나타내며, 즉 파일이 디스크에서 시작하는 위치를 의미한다. length는 파일의 크기를 바이트 단위로 나타내며, 파일의 실제 크기를 표현한다. magic은 해당 구조체가 올바르게 저장되어 있는지를 확인하기 위한 "매직 넘버" 역할을 한다. 마지막으로, unused[125]는 구조체의 크기를 맞추기 위해 할당된 빈 배열이다.
+
+```
+struct inode_disk
+  {
+    block_sector_t start;               /* First data sector. */
+    off_t length;                       /* File size in bytes. */
+    unsigned magic;                     /* Magic number. */
+    uint32_t unused[125];               /* Not used. */
+  };
+```
+
+세 번째 구조체는 file이다. 이 구조체는 파일의 inode를 가리키는 포인터, 현재 파일 포인터의 위치를 나타내는 pos, 그리고 file_deny_write 함수가 호출되었는지 여부를 확인하는 deny_write 변수를 포함하고 있다.
+
+```
+struct file 
+  {
+    struct inode *inode;        /* File's inode. */
+    off_t pos;                  /* Current position. */
+    bool deny_write;            /* Has file_deny_write() been called? */
+  };
+```
+
+먼저, 파일을 여는 함수인 file_open에 대해 설명하겠다. 파일을 새로 열 때, 앞서 설명한 새로운 file 객체를 생성하고 초기화해야 한다. calloc 함수를 사용하여 file 구조체의 크기만큼 메모리를 동적 할당하고, 모든 바이트를 0으로 초기화한다. 전달받은 inode를 생성한 file 구조체에 저장하고, pos(즉, 파일의 시작 위치)를 0으로 초기화한다. 그리고 deny_write는 아직 file_deny_write 함수가 호출되지 않았기 때문에 false로 설정한 후, 해당 file 객체를 반환한다.
+
+그러나, 만약 전달받은 inode가 null이거나 file 객체를 생성하지 못한 경우, inode_close를 호출하여 해당 inode를 닫고, file 객체에 대한 메모리를 해제한다.
+
+```
+struct file *
+file_open (struct inode *inode) 
+{
+  struct file *file = calloc (1, sizeof *file);
+  if (inode != NULL && file != NULL)
+    {
+      file->inode = inode;
+      file->pos = 0;
+      file->deny_write = false;
+      return file;
+    }
+  else
+    {
+      inode_close (inode);
+      free (file);
+      return NULL; 
+    }
+}
+```
+
+inode_close 함수에서는 먼저 전달받은 inode 객체가 비어있는지 확인한 후, inode가 참조된 횟수를 나타내는 open_cnt 값을 1 줄이고, 그 값이 0과 같은지 확인한다. 만약 open_cnt가 0이라면, 해당 inode를 elem 리스트에서 제거하고, inode의 removed 변수가 true일 경우, 즉 파일을 삭제해야 하는 경우, inode가 저장된 섹터의 메모리를 해제하고, 파일의 데이터가 저장되어 있는 메모리 블록도 해제해준다. 마지막으로, inode 자체도 메모리에서 해제한다.
+
+```
+void
+inode_close (struct inode *inode) 
+{
+  /* Ignore null pointer. */
+  if (inode == NULL)
+    return;
+
+  /* Release resources if this was the last opener. */
+  if (--inode->open_cnt == 0)
+    {
+      /* Remove from inode list and release lock. */
+      list_remove (&inode->elem);
+ 
+      /* Deallocate blocks if removed. */
+      if (inode->removed) 
+        {
+          free_map_release (inode->sector, 1);
+          free_map_release (inode->data.start,
+                            bytes_to_sectors (inode->data.length)); 
+        }
+
+      free (inode); 
+    }
+}
+```
+
+파일을 다시 여는 함수에서는, 인자로 전달받은 파일의 inode를 inode_reopen 함수를 통해 먼저 연 다음, 이 inode를 기반으로 file_open 함수를 호출하여 새롭게 file 객체를 생성하고 반환한다. inode_reopen 함수를 살펴보면, 인자로 전달된 inode가 비어있지 않은 경우, 해당 inode의 open_cnt 값을 1 증가시킨 뒤, 그 inode를 반환한다.
+
+```
+struct file *
+file_reopen (struct file *file) 
+{
+  return file_open (inode_reopen (file->inode));
+}
+
+struct inode *
+inode_reopen (struct inode *inode)
+{
+  if (inode != NULL)
+    inode->open_cnt++;
+  return inode;
+}
+```
+
+파일을 닫는 함수에서는 먼저, 인자로 전달된 file 객체가 비어있는지 확인한 후, file_allow_write 함수를 호출하여 해당 파일에 대한 쓰기 제한을 해제한다. 이후, inode_close 함수를 통해 inode를 메모리에서 해제하고, 마지막으로 동적 할당했던 file 객체를 메모리에서 해제한다.
+
+```
+void
+file_close (struct file *file) 
+{
+  if (file != NULL)
+    {
+      file_allow_write (file);
+      inode_close (file->inode);
+      free (file); 
+    }
+}
+```
+
+file_get_inode는 file 객체의 inode를 반환하는 함수이다.
+
+```
+struct inode *
+file_get_inode (struct file *file) 
+{
+  return file->inode;
+}
+```
+
+파일에서 데이터를 읽을 때는 file_read 함수가 사용된다. 이 함수는 먼저 inode_read_at 함수를 통해 파일의 현재 위치인 file->pos에서부터 지정된 size만큼의 데이터를 buffer에 저장한다. 이후, pos에 읽어온 바이트 수만큼 더해주어 현재 위치를 새롭게 업데이트한 다음, 읽은 바이트 수를 반환한다. 
+
+```
+off_t
+file_read (struct file *file, void *buffer, off_t size) 
+{
+  off_t bytes_read = inode_read_at (file->inode, buffer, size, file->pos);
+  file->pos += bytes_read;
+  return bytes_read;
+}
+```
+
+file_read_at 함수는 특정 위치에서 데이터를 읽는 함수로, file_ofs에서 지정된 size만큼의 데이터를 읽어 buffer에 저장한 후, 읽은 바이트 수를 반환한다.
+
+```
+off_t
+file_read_at (struct file *file, void *buffer, off_t size, off_t file_ofs) 
+{
+  return inode_read_at (file->inode, buffer, size, file_ofs);
+}
+```
+
+위에서 사용한 inode_read_at 함수 설명 추가 (나중에 추가) 
+
+```
+off_t
+inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset) 
+{
+  uint8_t *buffer = buffer_;
+  off_t bytes_read = 0;
+  uint8_t *bounce = NULL;
+
+  while (size > 0) 
+    {
+      /* Disk sector to read, starting byte offset within sector. */
+      block_sector_t sector_idx = byte_to_sector (inode, offset);
+      int sector_ofs = offset % BLOCK_SECTOR_SIZE;
+
+      /* Bytes left in inode, bytes left in sector, lesser of the two. */
+      off_t inode_left = inode_length (inode) - offset;
+      int sector_left = BLOCK_SECTOR_SIZE - sector_ofs;
+      int min_left = inode_left < sector_left ? inode_left : sector_left;
+
+      /* Number of bytes to actually copy out of this sector. */
+      int chunk_size = size < min_left ? size : min_left;
+      if (chunk_size <= 0)
+        break;
+
+      if (sector_ofs == 0 && chunk_size == BLOCK_SECTOR_SIZE)
+        {
+          /* Read full sector directly into caller's buffer. */
+          block_read (fs_device, sector_idx, buffer + bytes_read);
+        }
+      else 
+        {
+          /* Read sector into bounce buffer, then partially copy
+             into caller's buffer. */
+          if (bounce == NULL) 
+            {
+              bounce = malloc (BLOCK_SECTOR_SIZE);
+              if (bounce == NULL)
+                break;
+            }
+          block_read (fs_device, sector_idx, bounce);
+          memcpy (buffer + bytes_read, bounce + sector_ofs, chunk_size);
+        }
+      
+      /* Advance. */
+      size -= chunk_size;
+      offset += chunk_size;
+      bytes_read += chunk_size;
+    }
+  free (bounce);
+
+  return bytes_read;
+}
+```
+
+아래는 네 개의 쓰기 관련 함수들이다. 먼저, file_write 함수는 inode_write_at 함수를 이용하여 file->pos(현재 위치)에서 size만큼 buffer에 있는 데이터를 쓴다. 이후, 쓴 바이트 수만큼 pos에 더해 현재 위치를 업데이트하고, 최종적으로 쓴 바이트 수를 반환한다.
+
+```
+off_t
+file_write (struct file *file, const void *buffer, off_t size) 
+{
+  off_t bytes_written = inode_write_at (file->inode, buffer, size, file->pos);
+  file->pos += bytes_written;
+  return bytes_written;
+}
+```
+
+file_write_at 함수는 위에서 설명한 file_read_at 함수처럼 특정 위치 (file_ofs)에서 쓰기 작업을 수행하는 함수이다. 
+
+```
+off_t
+file_write_at (struct file *file, const void *buffer, off_t size,
+               off_t file_ofs) 
+{
+  return inode_write_at (file->inode, buffer, size, file_ofs);
+}
+```
+
+inode_write_at 설명 (나중에 추가) 
+
+```
+off_t
+inode_write_at (struct inode *inode, const void *buffer_, off_t size,
+                off_t offset) 
+{
+  const uint8_t *buffer = buffer_;
+  off_t bytes_written = 0;
+  uint8_t *bounce = NULL;
+
+  if (inode->deny_write_cnt)
+    return 0;
+
+  while (size > 0) 
+    {
+      /* Sector to write, starting byte offset within sector. */
+      block_sector_t sector_idx = byte_to_sector (inode, offset);
+      int sector_ofs = offset % BLOCK_SECTOR_SIZE;
+
+      /* Bytes left in inode, bytes left in sector, lesser of the two. */
+      off_t inode_left = inode_length (inode) - offset;
+      int sector_left = BLOCK_SECTOR_SIZE - sector_ofs;
+      int min_left = inode_left < sector_left ? inode_left : sector_left;
+
+      /* Number of bytes to actually write into this sector. */
+      int chunk_size = size < min_left ? size : min_left;
+      if (chunk_size <= 0)
+        break;
+
+      if (sector_ofs == 0 && chunk_size == BLOCK_SECTOR_SIZE)
+        {
+          /* Write full sector directly to disk. */
+          block_write (fs_device, sector_idx, buffer + bytes_written);
+        }
+      else 
+        {
+          /* We need a bounce buffer. */
+          if (bounce == NULL) 
+            {
+              bounce = malloc (BLOCK_SECTOR_SIZE);
+              if (bounce == NULL)
+                break;
+            }
+
+          /* If the sector contains data before or after the chunk
+             we're writing, then we need to read in the sector
+             first.  Otherwise we start with a sector of all zeros. */
+          if (sector_ofs > 0 || chunk_size < sector_left) 
+            block_read (fs_device, sector_idx, bounce);
+          else
+            memset (bounce, 0, BLOCK_SECTOR_SIZE);
+          memcpy (bounce + sector_ofs, buffer + bytes_written, chunk_size);
+          block_write (fs_device, sector_idx, bounce);
+        }
+
+      /* Advance. */
+      size -= chunk_size;
+      offset += chunk_size;
+      bytes_written += chunk_size;
+    }
+  free (bounce);
+
+  return bytes_written;
+}
+```
+
+아래의 두 함수는 파일에 대한 쓰기 작업을 금지하거나 허가하는 함수이다. 먼저, file_deny_write 함수는 file 객체의 deny_write 변수가 false일 경우 이를 true로 설정한 다음, inode_deny_write 함수를 호출하여 해당 inode에 대한 쓰기를 금지한다. inode_deny_write 함수에서는 먼저 해당 inode의 deny_write_cnt를 1 증가시킨 뒤, 이 값이 open_cnt 이하인지 확인한다. 이는 쓰기를 제한하려면 해당 파일이 먼저 열려 있어야 하므로, 쓰기를 제한하는 파일의 개수보다 열려 있는 개수가 더 클 수 없다는 조건을 확인하는 것이다.
+
+```
+void
+file_deny_write (struct file *file) 
+{
+  ASSERT (file != NULL);
+  if (!file->deny_write) 
+    {
+      file->deny_write = true;
+      inode_deny_write (file->inode);
+    }
+}
+
+void
+inode_deny_write (struct inode *inode) 
+{
+  inode->deny_write_cnt++;
+  ASSERT (inode->deny_write_cnt <= inode->open_cnt);
+}
+```
+
+반대로, file_allow_write 함수에서는 쓰기 작업을 허가해야 하므로, deny_write가 true인 경우 이를 false로 설정한 후, inode_allow_write 함수를 호출하여 해당 inode에 대한 쓰기를 허가한다. inode_allow_write 함수에서는 먼저 해당 inode의 deny_write_cnt가 0보다 큰지 확인한다. deny_write_cnt 변수가 0보다 크다는 것은 쓰기가 금지되어 있음을 의미한다. 또한, 앞서와 동일한 이유로, 해당 inode의 deny_write_cnt가 open_cnt보다 작거나 같은지 확인한다. 마지막으로, deny_write_cnt 값을 1 감소시켜 쓰기 제한을 해제한다.
+
+```
+void
+file_allow_write (struct file *file) 
+{
+  ASSERT (file != NULL);
+  if (file->deny_write) 
+    {
+      file->deny_write = false;
+      inode_allow_write (file->inode);
+    }
+}
+
+void
+inode_allow_write (struct inode *inode) 
+{
+  ASSERT (inode->deny_write_cnt > 0);
+  ASSERT (inode->deny_write_cnt <= inode->open_cnt);
+  inode->deny_write_cnt--;
+}
+```
+
+file_length 함수는 먼저, 인자로 전달된 file 객체가 비어있는지 확인한 후, inode_length 함수를 호출하여 파일의 길이를 반환한다. inode_length 함수는 인자로 전달된 inode의 data에 있는 length 값을 반환한다.
+
+```
+off_t
+file_length (struct file *file) 
+{
+  ASSERT (file != NULL);
+  return inode_length (file->inode);
+}
+
+off_t
+inode_length (const struct inode *inode)
+{
+  return inode->data.length;
+}
+```
+
+file_seek 함수는 파일의 위치 포인터인 pos를 인자로 받은 new_pos로 재설정하는 함수이다. 먼저, 인자로 전달된 file 객체가 비어있는지 확인하고, 새로운 위치 new_pos가 음수가 아닌 유효한 값인지 검사한다. 이후, 유효한 값일 경우 file->pos를 new_pos로 설정해준다.
+
+```
+void
+file_seek (struct file *file, off_t new_pos)
+{
+  ASSERT (file != NULL);
+  ASSERT (new_pos >= 0);
+  file->pos = new_pos;
+}
+```
+
+file_tell 함수는 인자로 전달된 file 객체가 비어있지 않을 경우, 해당 file의 포인터 위치인 pos를 반환해준다.
+
+```
+off_t
+file_tell (struct file *file) 
+{
+  ASSERT (file != NULL);
+  return file->pos;
+}
+```
+
+filesys_init 함수는 파일 시스템을 초기화하는 함수로, 먼저 inode_init과 free_map_init 함수를 호출하여 파일 시스템을 초기화한다. 이후, 아래에서 설명할 do_format 함수를 통해 파일 시스템을 포맷하고 새로 설정한다. 마지막으로, free_map_open 함수를 호출하여 free_map을 연다.  
+
+(추가 필요: free map 설명) 
+
+```
+void
+filesys_init (bool format) 
+{
+  fs_device = block_get_role (BLOCK_FILESYS);
+  if (fs_device == NULL)
+    PANIC ("No file system device found, can't initialize file system.");
+
+  inode_init ();
+  free_map_init ();
+
+  if (format) 
+    do_format ();
+
+  free_map_open ();
+}
+```
+
+inode_init 함수를 보면 (나중에 수정) 
+
+```
+void
+inode_init (void) 
+{
+  list_init (&open_inodes);
+}
+
+free_map_init 함수 추가 필요 
+```
+
+do_format 함수는 파일 시스템을 포맷하는 함수이다. 먼저, free_map_create 함수를 호출하여 새로운 free map을 생성하고, dir_create 함수를 이용해 파일 시스템의 시작 지점에 16개의 엔트리를 갖는 디렉토리를 생성한다. 이후, free_map_close 함수를 호출하여 free map을 닫는다.
+
+```
+static void
+do_format (void)
+{
+  printf ("Formatting file system...");
+  free_map_create ();
+  if (!dir_create (ROOT_DIR_SECTOR, 16))
+    PANIC ("root directory creation failed");
+  free_map_close ();
+  printf ("done.\n");
+}
+```
+
+filesys_done 함수는 파일 시스템을 종료하는 함수로, free_map_close 함수를 호출하여 사용한 리소스들을 정리해준다.
+
+```
+void
+filesys_done (void) 
+{
+  free_map_close ();
+}
+```
+
+`filesys_create` 함수는 파일을 생성하고 디렉토리에 추가하는 역할을 한다. 먼저, `dir_open_root` 함수를 호출하여 루트 디렉토리의 위치를 `dir`에 포인터로 저장한다. 이후, `free_map_allocate` 함수를 통해 새 파일을 위한 블록을 할당하고, 해당 섹터 번호를 `inode_sector`에 저장한다. `inode_create` 함수를 사용하여 새로운 `inode`를 생성한 후, `dir_add` 함수를 통해 해당 파일을 디렉토리에 추가한다. 위의 세 가지 작업 중 하나라도 실패하거나 `inode_sector`가 0이 아닐 경우, 즉 이미 블록이 할당된 상태라면, 할당된 블록을 `free_map_release` 함수를 통해 해제한다. 마지막으로, 루트 디렉토리를 닫고 파일 생성의 성공 여부를 반환한다. 
+
+```
+bool
+filesys_create (const char *name, off_t initial_size) 
+{
+  block_sector_t inode_sector = 0;
+  struct dir *dir = dir_open_root ();
+  bool success = (dir != NULL
+                  && free_map_allocate (1, &inode_sector)
+                  && inode_create (inode_sector, initial_size)
+                  && dir_add (dir, name, inode_sector));
+  if (!success && inode_sector != 0) 
+    free_map_release (inode_sector, 1);
+  dir_close (dir);
+
+  return success;
+}
+```
+
+`filesys_open` 함수에서는 `dir_look_up` 함수를 사용하여 `name`이라는 파일 이름을 가진 파일을 디렉토리에서 찾은 후, 해당 파일의 `inode`를 기반으로 `file_open` 함수를 호출하여 `file` 객체를 생성하고 반환한다.
+
+```
+struct file *
+filesys_open (const char *name)
+{
+  struct dir *dir = dir_open_root ();
+  struct inode *inode = NULL;
+
+  if (dir != NULL)
+    dir_lookup (dir, name, &inode);
+  dir_close (dir);
+
+  return file_open (inode);
+}
+```
+
+filesys_remove 함수는 name이라는 파일 이름을 가진 파일을 디렉토리에서 제거하는 역할을 한다. 이 함수는 dir_remove 함수를 사용하여 파일을 삭제하고, 그 성공 여부를 반환한다.
+
+```
+bool
+filesys_remove (const char *name) 
+{
+  struct dir *dir = dir_open_root ();
+  bool success = dir != NULL && dir_remove (dir, name);
+  dir_close (dir); 
+
+  return success;
+}
+```
+
+
+(아직 설명 못 적은 함수들:
+어디서 사용되는지 모르겠는 함수들도 포함되어있음) 
+
+```
+bool
+inode_create (block_sector_t sector, off_t length)
+{
+  struct inode_disk *disk_inode = NULL;
+  bool success = false;
+
+  ASSERT (length >= 0);
+
+  /* If this assertion fails, the inode structure is not exactly
+     one sector in size, and you should fix that. */
+  ASSERT (sizeof *disk_inode == BLOCK_SECTOR_SIZE);
+
+  disk_inode = calloc (1, sizeof *disk_inode);
+  if (disk_inode != NULL)
+    {
+      size_t sectors = bytes_to_sectors (length);
+      disk_inode->length = length;
+      disk_inode->magic = INODE_MAGIC;
+      if (free_map_allocate (sectors, &disk_inode->start)) 
+        {
+          block_write (fs_device, sector, disk_inode);
+          if (sectors > 0) 
+            {
+              static char zeros[BLOCK_SECTOR_SIZE];
+              size_t i;
+              
+              for (i = 0; i < sectors; i++) 
+                block_write (fs_device, disk_inode->start + i, zeros);
+            }
+          success = true; 
+        } 
+      free (disk_inode);
+    }
+  return success;
+}
+```
+
+```
+struct inode *
+inode_open (block_sector_t sector)
+{
+  struct list_elem *e;
+  struct inode *inode;
+
+  /* Check whether this inode is already open. */
+  for (e = list_begin (&open_inodes); e != list_end (&open_inodes);
+       e = list_next (e)) 
+    {
+      inode = list_entry (e, struct inode, elem);
+      if (inode->sector == sector) 
+        {
+          inode_reopen (inode);
+          return inode; 
+        }
+    }
+
+  /* Allocate memory. */
+  inode = malloc (sizeof *inode);
+  if (inode == NULL)
+    return NULL;
+
+  /* Initialize. */
+  list_push_front (&open_inodes, &inode->elem);
+  inode->sector = sector;
+  inode->open_cnt = 1;
+  inode->deny_write_cnt = 0;
+  inode->removed = false;
+  block_read (fs_device, inode->sector, &inode->data);
+  return inode;
+}
+```
+
+```
+block_sector_t
+inode_get_inumber (const struct inode *inode)
+{
+  return inode->sector;
+}
+```
+
+```
+void
+inode_remove (struct inode *inode) 
+{
+  ASSERT (inode != NULL);
+  inode->removed = true;
+}
+```
+
+```
+struct dir 
+  {
+    struct inode *inode;                /* Backing store. */
+    off_t pos;                          /* Current position. */
+  };
+
+bool
+dir_create (block_sector_t sector, size_t entry_cnt)
+{
+  return inode_create (sector, entry_cnt * sizeof (struct dir_entry));
+}
+
+struct dir *
+dir_open (struct inode *inode) 
+{
+  struct dir *dir = calloc (1, sizeof *dir);
+  if (inode != NULL && dir != NULL)
+    {
+      dir->inode = inode;
+      dir->pos = 0;
+      return dir;
+    }
+  else
+    {
+      inode_close (inode);
+      free (dir);
+      return NULL; 
+    }
+}
+```
+
+(등등.. /src/filesys/directory.c 랑 free-map.c 파일에 있는 함수들) 
+
+
+
 
 
 ## Design Implementation 
@@ -373,7 +1005,8 @@ how to solve problems (나중에 지우기)
 data structure and detailed algorithm (나중에 지우기)
 
 1. process termination messages
-2. argument passing
-3. system call
-   -> syscall_handler 함수 수정? 
-4. denying writes to executables 
+     printf ("%s: exit(%d)\n", process_name, exit_code); 이걸 유저 프로세스가 종료될 때마다 출력해야함. -> sys_exit 에 함수에서 이 라인을 프린트 하면 될 것 같음. 
+3. argument passing -> process_execute 에서 받은 문자열을 파싱해서 파일이름이랑 argument 로 나누기 
+4. system call
+   -> syscall_handler 함수 수정? (현재는 바로 exit 하는 식으로 구현되어있는데 여기에 handler 추가하기) 
+5. denying writes to executables -> load 사용할 때는 write deny 해두는 식으로 구현 하고 exit 될때 다시 write allow 하기 
