@@ -306,7 +306,7 @@ pintos 주석에 쓰여진 바와 같이, run task는 argv[argc]에 저장된 �
 
 (수정 필요: /thread/interrupt.c 파일 내의 함수 추가 필요..??) 
 
-초반에 설명한 Pintos의 main entry point인 pintos_init 함수에 나와 있는 exception_init()과 syscall_init() 함수에 대해 알아보았다. 먼저, 아래의 syscall_init 함수를 보면 intr_register_init 함수를 호출해 syscall interrupt를 등록했다. 그리고 intr_register_int 함수를 호출했다.
+ exception_init()과 syscall_init() 함수에 대해 알아보았다. 먼저, 아래의 syscall_init 함수를 보면 intr_register_init 함수를 호출해 syscall interrupt를 등록했다. 그리고 intr_register_int 함수를 호출했다.
 
 ```
  void
