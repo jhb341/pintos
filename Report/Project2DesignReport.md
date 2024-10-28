@@ -457,7 +457,7 @@ void
 structure(file, inode), functions(need to implement system call) of the file system (나중에 지우기)
 (“filesys/ file.c”, “filesys/ inode.c” “filesys/filesys.c”)(나중에 지우기)
 
-![image](https://github.com/user-attachments/assets/fdd3c960-c2ec-4e6a-a820-38a7e4cb022d)
+![image](https://github.com/user-attachments/assets/fdd3c960-c2ec-4e6a-a820-38a7e4cb022d)\
 (뭔가 이런 느낌의 disk 와 sector 설명하는 그림 들어가면 좋을 것 같음, 나중에 지우기) 
 
 먼저, file system의 주요 구조체 세 가지에 대해 알아보았다. 첫 번째로, inode 구조체는 file system에서 파일이나 디렉토리 정보를 저장하는 역할을 한다. elem은 여러 inode를 연결한 리스트 요소이며, sector는 해당 inode가 디스크의 어떤 섹터에 저장되어 있는지를 나타내는 정수값이다. open_cnt는 현재 열려 있는 inode의 개수를 나타내며, 이는 파일이나 디렉토리가 몇 번 열려 있는지를 알려준다. removed는 해당 inode가 삭제되었는지 여부를 나타내며, deny_write_cnt는 파일에 대한 쓰기 작업 허용 여부를 관리하는 변수이다. 마지막으로, data는 아래에서 설명할 inode_disk 구조체를 가리키는 변수로, 실제 파일의 데이터를 저장한다.
@@ -616,7 +616,7 @@ file_read_at (struct file *file, void *buffer, off_t size, off_t file_ofs)
 }
 ```
 
-위에서 사용한 inode_read_at 함수 설명 추가 (나중에 추가) 
+위에서 사용한 inode_read_at 함수는 섹터 단위로 데이터를 읽어와 필요한 만큼 버퍼에 복사하는 역할을 한다. size가 0보다 클 때, 즉 읽어야 할 데이터가 남아 있을 때, while 루프를 돌며 섹터 데이터를 버퍼에 저장한다. 이때, inode_left(inode 내에 남은 바이트 수)와 sector_left(섹터 내에 남은 바이트 수)를 비교하여 더 작은 값을 기준으로 실제로 읽어올 바이트 크기인 chunk_size를 결정한다. 섹터의 데이터를 가져올 때는 block_read 함수를 사용하며, 만약 섹터 전체를 복사해야 할 경우 block_read를 통해 버퍼에 직접 복사하고, 부분적으로 복사할 경우에는 먼저 버퍼가 메모리를 할당받았는지 확인한 후 block_read로 버퍼의 특정 위치에 복사해 준다. 모든 읽기 명령이 끝난 후에는 free 함수를 이용해 bounce buffer의 메모리 할당을 해제한다.
 
 ```
 off_t
@@ -695,7 +695,7 @@ file_write_at (struct file *file, const void *buffer, off_t size,
 }
 ```
 
-inode_write_at 설명 (나중에 추가) 
+inode_write_at 함수 역시 앞서 설명한 inode_read_at 함수와 유사하게, size에 따라 while 루프를 돌며 block_write 함수를 통해 쓰기 작업을 처리한다.
 
 ```
 off_t
@@ -849,8 +849,6 @@ file_tell (struct file *file)
 
 filesys_init 함수는 파일 시스템을 초기화하는 함수로, 먼저 inode_init과 free_map_init 함수를 호출하여 파일 시스템을 초기화한다. 이후, 아래에서 설명할 do_format 함수를 통해 파일 시스템을 포맷하고 새로 설정한다. 마지막으로, free_map_open 함수를 호출하여 free_map을 연다.  
 
-(추가 필요: free map 설명) 
-
 ```
 void
 filesys_init (bool format) 
@@ -869,7 +867,7 @@ filesys_init (bool format)
 }
 ```
 
-inode_init 함수를 보면 (나중에 수정) 
+inode_init 함수를 보면 list_init 함수를 사용하여 open_inodes 리스트의 헤더를 설정해줌으로써 open_inodes list를 초기화해준다. 
 
 ```
 void
@@ -877,8 +875,67 @@ inode_init (void)
 {
   list_init (&open_inodes);
 }
+```
 
-free_map_init 함수 추가 필요 
+여기서 말하는 free map은 파일 시스템에서 사용되지 않은 섹터를 찾기 위한 비트맵(bitmap)이다. 각 비트는 하나의 섹터를 나타내며, 해당 섹터의 사용 여부를 알려준다. free_map_init 함수는 free map을 초기화하는 역할을 한다. 그리고 free_map_open 함수는 디스크에 저장된 free_map 파일을 열어 free_map_file에 저장한다.
+
+```
+void
+free_map_init (void) 
+{
+  free_map = bitmap_create (block_size (fs_device));
+  if (free_map == NULL)
+    PANIC ("bitmap creation failed--file system device is too large");
+  bitmap_mark (free_map, FREE_MAP_SECTOR);
+  bitmap_mark (free_map, ROOT_DIR_SECTOR);
+}
+
+void
+free_map_open (void) 
+{
+  free_map_file = file_open (inode_open (FREE_MAP_SECTOR));
+  if (free_map_file == NULL)
+    PANIC ("can't open free map");
+  if (!bitmap_read (free_map, free_map_file))
+    PANIC ("can't read free map");
+}
+```
+
+inode_open 함수는 인자로 받은 섹터에 있는 inode를 여는 역할을 한다. 만약 이미 열려 있는 inode가 있다면, inode_reopen 함수를 통해 다시 열어주고, 그렇지 않으면 새로운 inode를 malloc을 통해 메모리를 할당하여 초기화한다. 이때, open_cnt는 1로 설정하여 현재 열려 있는 inode가 해당 inode 하나뿐임을 나타내고, deny_write_cnt는 0으로 초기화하여 쓰기 작업이 가능하도록 한다. 이후, block_read 함수를 사용해 해당 섹터의 내용을 읽어와 inode->data에 저장한다. 마지막으로, 해당 inode를 반환한다.
+
+```
+struct inode *
+inode_open (block_sector_t sector)
+{
+  struct list_elem *e;
+  struct inode *inode;
+
+  /* Check whether this inode is already open. */
+  for (e = list_begin (&open_inodes); e != list_end (&open_inodes);
+       e = list_next (e)) 
+    {
+      inode = list_entry (e, struct inode, elem);
+      if (inode->sector == sector) 
+        {
+          inode_reopen (inode);
+          return inode; 
+        }
+    }
+
+  /* Allocate memory. */
+  inode = malloc (sizeof *inode);
+  if (inode == NULL)
+    return NULL;
+
+  /* Initialize. */
+  list_push_front (&open_inodes, &inode->elem);
+  inode->sector = sector;
+  inode->open_cnt = 1;
+  inode->deny_write_cnt = 0;
+  inode->removed = false;
+  block_read (fs_device, inode->sector, &inode->data);
+  return inode;
+}
 ```
 
 do_format 함수는 파일 시스템을 포맷하는 함수이다. 먼저, free_map_create 함수를 호출하여 새로운 free map을 생성하고, dir_create 함수를 이용해 파일 시스템의 시작 지점에 16개의 엔트리를 갖는 디렉토리를 생성한다. 이후, free_map_close 함수를 호출하여 free map을 닫는다.
@@ -896,70 +953,26 @@ do_format (void)
 }
 ```
 
-filesys_done 함수는 파일 시스템을 종료하는 함수로, free_map_close 함수를 호출하여 사용한 리소스들을 정리해준다.
+free_map_create 함수는 inode_create 함수를 통해 새로운 inode를 생성한 후, file_open 함수를 사용해 해당 파일을 연다. 이후, bitmap_write를 통해 비트맵을 파일에 기록한다.
 
 ```
 void
-filesys_done (void) 
+free_map_create (void) 
 {
-  free_map_close ();
+  /* Create inode. */
+  if (!inode_create (FREE_MAP_SECTOR, bitmap_file_size (free_map)))
+    PANIC ("free map creation failed");
+
+  /* Write bitmap to file. */
+  free_map_file = file_open (inode_open (FREE_MAP_SECTOR));
+  if (free_map_file == NULL)
+    PANIC ("can't open free map");
+  if (!bitmap_write (free_map, free_map_file))
+    PANIC ("can't write free map");
 }
 ```
 
-`filesys_create` 함수는 파일을 생성하고 디렉토리에 추가하는 역할을 한다. 먼저, `dir_open_root` 함수를 호출하여 루트 디렉토리의 위치를 `dir`에 포인터로 저장한다. 이후, `free_map_allocate` 함수를 통해 새 파일을 위한 블록을 할당하고, 해당 섹터 번호를 `inode_sector`에 저장한다. `inode_create` 함수를 사용하여 새로운 `inode`를 생성한 후, `dir_add` 함수를 통해 해당 파일을 디렉토리에 추가한다. 위의 세 가지 작업 중 하나라도 실패하거나 `inode_sector`가 0이 아닐 경우, 즉 이미 블록이 할당된 상태라면, 할당된 블록을 `free_map_release` 함수를 통해 해제한다. 마지막으로, 루트 디렉토리를 닫고 파일 생성의 성공 여부를 반환한다. 
-
-```
-bool
-filesys_create (const char *name, off_t initial_size) 
-{
-  block_sector_t inode_sector = 0;
-  struct dir *dir = dir_open_root ();
-  bool success = (dir != NULL
-                  && free_map_allocate (1, &inode_sector)
-                  && inode_create (inode_sector, initial_size)
-                  && dir_add (dir, name, inode_sector));
-  if (!success && inode_sector != 0) 
-    free_map_release (inode_sector, 1);
-  dir_close (dir);
-
-  return success;
-}
-```
-
-`filesys_open` 함수에서는 `dir_look_up` 함수를 사용하여 `name`이라는 파일 이름을 가진 파일을 디렉토리에서 찾은 후, 해당 파일의 `inode`를 기반으로 `file_open` 함수를 호출하여 `file` 객체를 생성하고 반환한다.
-
-```
-struct file *
-filesys_open (const char *name)
-{
-  struct dir *dir = dir_open_root ();
-  struct inode *inode = NULL;
-
-  if (dir != NULL)
-    dir_lookup (dir, name, &inode);
-  dir_close (dir);
-
-  return file_open (inode);
-}
-```
-
-filesys_remove 함수는 name이라는 파일 이름을 가진 파일을 디렉토리에서 제거하는 역할을 한다. 이 함수는 dir_remove 함수를 사용하여 파일을 삭제하고, 그 성공 여부를 반환한다.
-
-```
-bool
-filesys_remove (const char *name) 
-{
-  struct dir *dir = dir_open_root ();
-  bool success = dir != NULL && dir_remove (dir, name);
-  dir_close (dir); 
-
-  return success;
-}
-```
-
-
-(아직 설명 못 적은 함수들:
-어디서 사용되는지 모르겠는 함수들도 포함되어있음) 
+inode_create 함수는 지정된 섹터에 length를 길이로 갖는 파일을 포함한 inode를 생성하고 초기화한다. 먼저, inode_disk 구조체를 가리키는 포인터를 생성하고 초기화한다. 이후, inode_disk 구조체에 calloc을 사용해 동적으로 메모리를 할당하고, 모든 바이트를 0으로 초기화한다. length에 맞게 필요한 섹터의 수를 bytes_to_sectors 함수를 통해 계산한 후, inode의 길이를 설정한다. 다음으로, free_map_allocate 함수를 통해 섹터를 할당하고 inode 데이터를 저장한다. 마지막으로, inode_disk의 메모리를 해제하고, 성공 여부를 반환한다.
 
 ```
 bool
@@ -999,71 +1012,59 @@ inode_create (block_sector_t sector, off_t length)
 }
 ```
 
-```
-struct inode *
-inode_open (block_sector_t sector)
-{
-  struct list_elem *e;
-  struct inode *inode;
-
-  /* Check whether this inode is already open. */
-  for (e = list_begin (&open_inodes); e != list_end (&open_inodes);
-       e = list_next (e)) 
-    {
-      inode = list_entry (e, struct inode, elem);
-      if (inode->sector == sector) 
-        {
-          inode_reopen (inode);
-          return inode; 
-        }
-    }
-
-  /* Allocate memory. */
-  inode = malloc (sizeof *inode);
-  if (inode == NULL)
-    return NULL;
-
-  /* Initialize. */
-  list_push_front (&open_inodes, &inode->elem);
-  inode->sector = sector;
-  inode->open_cnt = 1;
-  inode->deny_write_cnt = 0;
-  inode->removed = false;
-  block_read (fs_device, inode->sector, &inode->data);
-  return inode;
-}
-```
-
-```
-block_sector_t
-inode_get_inumber (const struct inode *inode)
-{
-  return inode->sector;
-}
-```
+free_map_close 함수는 열려 있는 free_map 파일을 닫는 역할을 한다.
 
 ```
 void
-inode_remove (struct inode *inode) 
+free_map_close (void) 
 {
-  ASSERT (inode != NULL);
-  inode->removed = true;
+  file_close (free_map_file);
 }
 ```
 
-```
-struct dir 
-  {
-    struct inode *inode;                /* Backing store. */
-    off_t pos;                          /* Current position. */
-  };
+dir_create 함수는 새로운 디렉토리를 생성하는 함수로, inode_create 함수를 호출하여 entry_cnt * sizeof(struct dir_entry)를 length로 하는 inode를 생성한다.
 
+```
 bool
 dir_create (block_sector_t sector, size_t entry_cnt)
 {
   return inode_create (sector, entry_cnt * sizeof (struct dir_entry));
 }
+```
 
+filesys_done 함수는 파일 시스템을 종료하는 함수로, free_map_close 함수를 호출하여 사용한 리소스들을 정리해준다.
+
+```
+void
+filesys_done (void) 
+{
+  free_map_close ();
+}
+```
+
+`filesys_create` 함수는 파일을 생성하고 디렉토리에 추가하는 역할을 한다. 먼저, `dir_open_root` 함수를 호출하여 루트 디렉토리의 위치를 `dir`에 포인터로 저장한다. 이후, `free_map_allocate` 함수를 통해 새 파일을 위한 블록을 할당하고, 해당 섹터 번호를 `inode_sector`에 저장한다. `inode_create` 함수를 사용하여 새로운 `inode`를 생성한 후, `dir_add` 함수를 통해 해당 파일을 디렉토리에 추가한다. 위의 세 가지 작업 중 하나라도 실패하거나 `inode_sector`가 0이 아닐 경우, 즉 이미 블록이 할당된 상태라면, 할당된 블록을 `free_map_release` 함수를 통해 해제한다. 마지막으로, 루트 디렉토리를 닫고 파일 생성의 성공 여부를 반환한다. 
+
+```
+bool
+filesys_create (const char *name, off_t initial_size) 
+{
+  block_sector_t inode_sector = 0;
+  struct dir *dir = dir_open_root ();
+  bool success = (dir != NULL
+                  && free_map_allocate (1, &inode_sector)
+                  && inode_create (inode_sector, initial_size)
+                  && dir_add (dir, name, inode_sector));
+  if (!success && inode_sector != 0) 
+    free_map_release (inode_sector, 1);
+  dir_close (dir);
+
+  return success;
+}
+```
+
+dir_open_root는 dir_open 함수를 사용하여 루트 디렉토리에 해당하는 inode(디렉토리 구조체) 전체를 반환하므로, dir_open 함수를 이해해야 한다. dir_open 함수는 pos를 0으로 설정하고, 주어진 inode를 기반으로 한 디렉토리 구조체를 반환한다.
+
+```
 struct dir *
 dir_open (struct inode *inode) 
 {
@@ -1081,13 +1082,193 @@ dir_open (struct inode *inode)
       return NULL; 
     }
 }
+
+struct dir *
+dir_open_root (void)
+{
+  return dir_open (inode_open (ROOT_DIR_SECTOR));
+}
 ```
 
-(등등.. /src/filesys/directory.c 랑 free-map.c 파일에 있는 함수들) 
+free_map_allocate 함수는 cnt만큼 연속적으로 비어 있는 섹터를 찾아 해당 섹터들의 비트를 true로 설정하여 할당하는 함수이다. 이후, 찾은 섹터의 값을 sectorp(섹터 포인터)에 저장하고, 할당의 성공 여부를 나타내는 불리언 값을 반환한다.
 
+```
+bool
+free_map_allocate (size_t cnt, block_sector_t *sectorp)
+{
+  block_sector_t sector = bitmap_scan_and_flip (free_map, 0, cnt, false);
+  if (sector != BITMAP_ERROR
+      && free_map_file != NULL
+      && !bitmap_write (free_map, free_map_file))
+    {
+      bitmap_set_multiple (free_map, sector, cnt, false); 
+      sector = BITMAP_ERROR;
+    }
+  if (sector != BITMAP_ERROR)
+    *sectorp = sector;
+  return sector != BITMAP_ERROR;
+}
+```
 
+free_map_release 함수는 bitmap_all 함수를 사용해 범위 내의 모든 섹터가 할당된 상태인지 확인한 후, bit_set_multiple 함수를 통해 해당 섹터들의 비트를 0으로 설정한다. 이후, 변경사항을 bitmap_write 함수를 통해 free_map_file에 업데이트한다.
 
+```
+void
+free_map_release (block_sector_t sector, size_t cnt)
+{
+  ASSERT (bitmap_all (free_map, sector, cnt));
+  bitmap_set_multiple (free_map, sector, cnt, false);
+  bitmap_write (free_map, free_map_file);
+}
+```
 
+dir_add 함수는 디렉토리에 새로운 엔트리를 추가하는 역할을 한다. for 루프를 통해 빈 디렉토리 엔트리를 찾은 후, 빈 엔트리가 있다면 새로운 엔트리를 추가한다. 이후, 추가 과정의 성공 여부를 반환한다.
+
+```
+bool
+dir_add (struct dir *dir, const char *name, block_sector_t inode_sector)
+{
+  struct dir_entry e;
+  off_t ofs;
+  bool success = false;
+
+  ASSERT (dir != NULL);
+  ASSERT (name != NULL);
+
+  /* Check NAME for validity. */
+  if (*name == '\0' || strlen (name) > NAME_MAX)
+    return false;
+
+  /* Check that NAME is not in use. */
+  if (lookup (dir, name, NULL, NULL))
+    goto done;
+
+  /* Set OFS to offset of free slot.
+     If there are no free slots, then it will be set to the
+     current end-of-file.
+     
+     inode_read_at() will only return a short read at end of file.
+     Otherwise, we'd need to verify that we didn't get a short
+     read due to something intermittent such as low memory. */
+  for (ofs = 0; inode_read_at (dir->inode, &e, sizeof e, ofs) == sizeof e;
+       ofs += sizeof e) 
+    if (!e.in_use)
+      break;
+
+  /* Write slot. */
+  e.in_use = true;
+  strlcpy (e.name, name, sizeof e.name);
+  e.inode_sector = inode_sector;
+  success = inode_write_at (dir->inode, &e, sizeof e, ofs) == sizeof e;
+
+ done:
+  return success;
+}
+
+```
+
+`filesys_open` 함수에서는 `dir_look_up` 함수를 사용하여 `name`이라는 파일 이름을 가진 파일을 디렉토리에서 찾은 후, 해당 파일의 `inode`를 기반으로 `file_open` 함수를 호출하여 `file` 객체를 생성하고 반환한다.
+
+```
+struct file *
+filesys_open (const char *name)
+{
+  struct dir *dir = dir_open_root ();
+  struct inode *inode = NULL;
+
+  if (dir != NULL)
+    dir_lookup (dir, name, &inode);
+  dir_close (dir);
+
+  return file_open (inode);
+}
+```
+
+dir_lookup 함수는 inode_open 함수를 사용하여 해당 섹터에 있는 inode를 연 후, 성공 여부를 반환한다. 여기서 말하는 inode는 디렉토리의 엔트리로 name을 갖는 inode를 의미한다.
+
+```
+bool
+dir_lookup (const struct dir *dir, const char *name,
+            struct inode **inode) 
+{
+  struct dir_entry e;
+
+  ASSERT (dir != NULL);
+  ASSERT (name != NULL);
+
+  if (lookup (dir, name, &e, NULL))
+    *inode = inode_open (e.inode_sector);
+  else
+    *inode = NULL;
+
+  return *inode != NULL;
+}
+```
+
+dir_close 함수는 inode_close와 free 함수를 사용하여 열려 있는 디렉토리를 닫고, 메모리를 해제하는 역할을 한다.
+
+```
+void
+dir_close (struct dir *dir) 
+{
+  if (dir != NULL)
+    {
+      inode_close (dir->inode);
+      free (dir);
+    }
+}
+
+```
+
+filesys_remove 함수는 name이라는 파일 이름을 가진 파일을 디렉토리에서 제거하는 역할을 한다. 이 함수는 dir_remove 함수를 사용하여 파일을 삭제하고, 그 성공 여부를 반환한다.
+
+```
+bool
+filesys_remove (const char *name) 
+{
+  struct dir *dir = dir_open_root ();
+  bool success = dir != NULL && dir_remove (dir, name);
+  dir_close (dir); 
+
+  return success;
+}
+```
+
+dir_remove 함수는 name을 갖는 디렉토리 엔트리를 삭제하는 역할을 한다. dir_lookup 함수와 유사하게, lookup 함수를 통해 해당 엔트리를 찾고 inode를 연 후, inode_write_at 함수를 사용해 디렉토리 엔트리 삭제 상태를 업데이트한다. 이후, inode_remove와 inode_close 함수를 통해 해당 inode를 삭제하고 닫아준다. 마지막으로, 삭제 작업의 성공 여부를 반환한다.
+
+bool
+dir_remove (struct dir *dir, const char *name) 
+{
+  struct dir_entry e;
+  struct inode *inode = NULL;
+  bool success = false;
+  off_t ofs;
+
+  ASSERT (dir != NULL);
+  ASSERT (name != NULL);
+
+  /* Find directory entry. */
+  if (!lookup (dir, name, &e, &ofs))
+    goto done;
+
+  /* Open inode. */
+  inode = inode_open (e.inode_sector);
+  if (inode == NULL)
+    goto done;
+
+  /* Erase directory entry. */
+  e.in_use = false;
+  if (inode_write_at (dir->inode, &e, sizeof e, ofs) != sizeof e) 
+    goto done;
+
+  /* Remove inode. */
+  inode_remove (inode);
+  success = true;
+
+ done:
+  inode_close (inode);
+  return success;
+}
 
 ## Design Implementation 
 how to solve problems (나중에 지우기)
