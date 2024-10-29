@@ -1640,8 +1640,6 @@ dir_remove (struct dir *dir, const char *name)
 ```
 
 ## Design Implementation 
-how to solve problems (나중에 지우기)
-data structure and detailed algorithm (나중에 지우기)
 
 ### 1. Process Termination Messages
 
@@ -1649,7 +1647,7 @@ data structure and detailed algorithm (나중에 지우기)
 
 ### 2. Argument Passing 
 
-process_execute 함수는 현재 "file_name"으로 문자열 전체를 받아오지만, 이 문자열을 파일 이름과 인자로 구분하는 과정이 필요하다. /src/lib/string.c의 strtok_r() 함수를 사용하여 파일 이름과 인자를 분리하고, start_process를 호출할 때 스택에 인자들을 추가한 후 스택을 전달하는 방식으로 구현할 예정이다. 이를 위해 파싱된 인자들을 스택에 추가하는 함수를 만들고, 이 함수를 start_process 함수에서 성공 시(if (success) {...}) 실행되도록 수정할 예정이다.
+process_execute 함수는 현재 "file_name"으로 문자열 전체를 받아오지만, 이 문자열을 파일 이름과 인자로 구분하는 과정이 필요하다. /src/lib/string.c의 strtok_r() 함수를 사용하여 공백으로 구분하여 파일 이름과 인자를 분리하고, start_process를 호출할 때 스택에 인자들을 추가한 후 스택을 전달하는 방식으로 구현할 예정이다. 이를 위해 파싱된 인자들을 스택에 추가하는 함수를 만들고, 이 함수를 start_process 함수에서 성공 시(if (success) {...}) 실행되도록 수정할 예정이다.
 
 ```
 char *
@@ -1701,4 +1699,8 @@ strtok_r (char *s, const char *delimiters, char **save_ptr)
 
 ### 4. Denying Writes to Executables 
 
-filesys_open 함수에서는 동일한 이름(name)을 가진 파일을 열려고 할 때, file_deny_write 함수를 통해 해당 파일이 닫히기 전까지는 쓰기가 제한되도록 하였다. 파일이 닫히면 쓰기가 허용되도록 설계하였다.
+현재 실행 중인 파일 각각에 대한 쓰기 허용/제한을 관리하는 방법으로 두 가지를 고려해 보았다. 첫 번째 방법은, 현재 실행 중인 파일들의 리스트를 만들어 각 파일의 실행이 끝날 때마다 리스트에서 제거하는 방식이다. 이 방법은 실행 중인 파일 목록을 직관적으로 파악할 수 있다는 장점이 있지만, 실행 종료 후 리스트에서 제거하거나 쓰기 작업을 위해 확인할 때 리스트의 모든 요소를 검사해야 하므로 오버헤드가 클 것으로 예상된다.
+
+두 번째 방법은, 현재 디자인 분석에서 설명한 file_deny_write와 file_allow_write 함수를 활용하는 방식이다. 각 프로세스가 시작될 때 file_deny_write 함수를 호출하여 쓰기를 제한하고, 해당 프로세스가 종료되면 file_allow_write 함수를 호출하여 쓰기를 허용한다. 이번 프로젝트에서는 두 번째 방법을 이용하여 과제를 구현하고자 한다.
+
+따라서, 현재 실행 중인 파일을 가리키는 포인터 변수를 process control block 구조체를 생성 후 추가해준다. 이후 start_process에서 load 함수를 호출한 후, load 함수 내에서 이 포인터가 현재 실행 중인 파일을 가리키도록 설정하고 file_deny_write 함수를 호출하여 쓰기를 제한한다. 마지막으로, 작업이 완료되어 process_exit 함수가 호출될 때 file_allow_write 함수를 호출하여 다시 쓰기 작업을 허용함으로써 과제 4번을 구현할 수 있을 것이다.
