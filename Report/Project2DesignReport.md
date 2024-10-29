@@ -1694,8 +1694,12 @@ strtok_r (char *s, const char *delimiters, char **save_ptr)
 ```
 
 ### 3. System Call
-현재는 `syscall_handler`가 바로 exit하는 방식으로 구현되어 있으므로 이부분을 우선적으로 수정해주어야 한다. 우선 `intr_frame`의 esp값을 읽어와 stack에 user program이 push한 arguments, system call number를 4byte단위로 읽어와 정보를 stack또는 queue에 복사하여 저장해 처리해야 하는 system call에 대한 정보를 syscall_handler에 저장해야한다. 이후 syscall_handler에 각 system call number에 해당하는 helper함수를 정의하고 구현하여 각 number에 맞는 system call 을 각 helper함수가 처리할 수 있도록 구현한다. (e.g., `sys_exit_helper`등) 이처럼 systemcall number와 arguments를 적절한 helper함수에 전달하여 반환한 return value를  intr_frame의 eax에 저장할 수 있도록 구현할 것이다. 
 
+현재 syscall_handler는 바로 종료하는 방식으로 구현되어 있으므로, 이 부분을 우선적으로 수정해야 한다. 우선 intr_frame의 esp 값을 읽어와, 스택에 사용자 프로그램이 push한 인자들과 시스템 호출 번호를 4바이트 단위로 읽어들여 이를 스택 또는 큐에 복사해 저장한다. 이후 시스템 호출에 필요한 정보를 syscall_handler에 저장하여 처리할 수 있도록 한다.
+
+그 후 syscall_handler에 각 시스템 호출 번호에 해당하는 헬퍼 함수를 정의하고 구현하여, 각 번호에 맞는 시스템 호출이 적절한 헬퍼 함수에서 처리되도록 구현한다. 예를 들어, sys_exit_helper와 같은 헬퍼 함수를 통해 시스템 호출 번호와 인자를 전달하고, 반환된 값을 intr_frame의 eax에 저장할 수 있도록 한다.
+
+또한, 시스템 호출 및 실행 파일 쓰기 제한을 위한 pcb(프로세스 제어 블록) 구조체를 새롭게 정의하고자 한다. pcb에는 프로세스의 고유 ID, 부모 프로세스, 파일 시스템 접근을 위한 플래그 변수, 대기 처리를 위한 변수, 현재 실행 중인 파일이 포함되어야 한다. 그리고 thread 구조체에 이 pcb 포인터를 추가한 뒤, 프로세스가 생성되고 시작될 때(start_process 시점)에 해당 스레드의 pcb를 초기화할 예정이다. 여기서 추가된 현재 실행 중인 파일을 가리키는 포인터는 아래의 4번 과제에서 더 자세히 설명할 예정이다.
 
 ### 4. Denying Writes to Executables 
 
@@ -1703,4 +1707,4 @@ strtok_r (char *s, const char *delimiters, char **save_ptr)
 
 두 번째 방법은, 현재 디자인 분석에서 설명한 file_deny_write와 file_allow_write 함수를 활용하는 방식이다. 각 프로세스가 시작될 때 file_deny_write 함수를 호출하여 쓰기를 제한하고, 해당 프로세스가 종료되면 file_allow_write 함수를 호출하여 쓰기를 허용한다. 이번 프로젝트에서는 두 번째 방법을 이용하여 과제를 구현하고자 한다.
 
-따라서, 현재 실행 중인 파일을 가리키는 포인터 변수를 process control block 구조체를 생성 후 추가해준다. 이후 start_process에서 load 함수를 호출한 후, load 함수 내에서 이 포인터가 현재 실행 중인 파일을 가리키도록 설정하고 file_deny_write 함수를 호출하여 쓰기를 제한한다. 마지막으로, 작업이 완료되어 process_exit 함수가 호출될 때 file_allow_write 함수를 호출하여 다시 쓰기 작업을 허용함으로써 과제 4번을 구현할 수 있을 것이다.
+따라서, 현재 실행 중인 파일을 가리키는 포인터 변수를 위에서 생성한 process control block 구조체에 추가해준다. 이후 start_process에서 load 함수를 호출한 후, load 함수 내에서 이 포인터가 현재 실행 중인 파일을 가리키도록 설정하고 file_deny_write 함수를 호출하여 쓰기를 제한한다. 마지막으로, 작업이 완료되어 process_exit 함수가 호출될 때 file_allow_write 함수를 호출하여 다시 쓰기 작업을 허용함으로써 과제 4번을 구현할 수 있을 것이다.
