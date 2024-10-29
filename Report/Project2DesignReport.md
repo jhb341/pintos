@@ -1647,15 +1647,60 @@ data structure and detailed algorithm (나중에 지우기)
 
 ### 1. Process Termination Messages
 
-유저 process 가 종료될 때 마다 "printf ("%s: exit(%d)\n", process_name, exit_code);" 이 코드를 추가해주어 process termination message 를 출력해주어야한다. thread 구조체에 termination message 를 출력해야하는지 여부를 알려주는 boolean 함수를 추가한 다음 process_execute 함수를 통해 새로운 process 가 생성 됐을 경우 true 로 설정해주고, halt 나 kernel thread 가 끝날 때는 false 로 설정해줄 것이다. 그리고, thread_exit 함수에서 해당 출력 instruction 을 추가하면 될 것이다. 여기서 process_name 은 아래에서 설명할 argument passing 과정에서 thread 구조체에 저장해 줄 것이고, exit_code 역시 (수정?) 함수에서 thread 구조체에 저장해줄 예정이다. 
+유저 프로세스가 종료될 때마다 printf ("%s: exit(%d)\n", process_name, exit_code); 코드를 추가하여 프로세스 종료 메시지를 출력해야 한다. 이를 위해, thread 구조체에 종료 메시지 출력 여부를 알려주는 boolean 변수를 추가할 예정이다. 새로운 프로세스가 process_execute 함수에서 생성될 경우 이 변수를 true로 설정하고, halt나 커널 스레드 종료 시에는 false로 설정한다. 이후 thread_exit 함수에서 해당 출력 명령을 수행하도록 한다.
 
 ### 2. Argument Passing 
 
--> process_execute 에서 받은 문자열을 파싱해서 파일이름이랑 argument 로 나누기 
+process_execute 함수는 현재 "file_name"으로 문자열 전체를 받아오지만, 이 문자열을 파일 이름과 인자로 구분하는 과정이 필요하다. /src/lib/string.c의 strtok_r() 함수를 사용하여 파일 이름과 인자를 분리하고, start_process를 호출할 때 스택에 인자들을 추가한 후 스택을 전달하는 방식으로 구현할 예정이다. 이를 위해 파싱된 인자들을 스택에 추가하는 함수를 만들고, 이 함수를 start_process 함수에서 성공 시 실행되도록 설계하였다.
+
+```
+char *
+strtok_r (char *s, const char *delimiters, char **save_ptr) 
+{
+  char *token;
+  
+  ASSERT (delimiters != NULL);
+  ASSERT (save_ptr != NULL);
+
+  /* If S is nonnull, start from it.
+     If S is null, start from saved position. */
+  if (s == NULL)
+    s = *save_ptr;
+  ASSERT (s != NULL);
+
+  /* Skip any DELIMITERS at our current position. */
+  while (strchr (delimiters, *s) != NULL) 
+    {
+      /* strchr() will always return nonnull if we're searching
+         for a null byte, because every string contains a null
+         byte (at the end). */
+      if (*s == '\0')
+        {
+          *save_ptr = s;
+          return NULL;
+        }
+
+      s++;
+    }
+
+  /* Skip any non-DELIMITERS up to the end of the string. */
+  token = s;
+  while (strchr (delimiters, *s) == NULL)
+    s++;
+  if (*s != '\0') 
+    {
+      *s = '\0';
+      *save_ptr = s + 1;
+    }
+  else 
+    *save_ptr = s;
+  return token;
+}
+```
 
 ### 3. System Call
    -> syscall_handler 함수 수정? (현재는 바로 exit 하는 식으로 구현되어있는데 여기에 handler 추가하기) 
 
 ### 4. Denying Writes to Executables 
 
-filesys_open 함수에서 같은 이름 (name) 을 가진 file 을 열려고 할 때, file_deny_write 함수를 통해 해당 파일이 close 되기 전까지는 write denied 상태로 존재하고 close 된 후에 write allowed 되도록 디자인 하였다. 
+filesys_open 함수에서는 동일한 이름(name)을 가진 파일을 열려고 할 때, file_deny_write 함수를 통해 해당 파일이 닫히기 전까지는 쓰기가 제한되도록 하였다. 파일이 닫히면 쓰기가 허용되도록 설계하였다.
