@@ -265,7 +265,7 @@ start_process (void *file_name_)
 }
 ```
 
-process_wait 함수는 특정 스레드의 종료를 기다린 후 해당 스레드의 종료 상태를 반환하는 함수지만, 현재는 -1을 반환하도록 구현되어 있다. 이번 프로젝트 2-2에서는 이 함수의 수정 사항을 설명할 것이다.
+process_wait 함수는 특정 스레드의 종료를 기다린 후 해당 스레드의 종료 상태를 반환하는 함수지만, 현재는 -1을 반환하도록 구현되어 있다. 아래의 design proposal 에서 이 함수의 수정 사항을 설명할 것이다.
 
 ```
 int
@@ -457,8 +457,7 @@ setup_stack (void **esp)
 }
 ```
 
-여기까지는 main()에서의 초기화 과정에 대한 설명이다. 지금부터는 실제 유저프로그램의 실행과정에 대해 알아보겠다.
-user program의 entry point는 ~src/lib/user/entry.c에 구현된 `_start`이다. 
+지금부터는 앞서 설명한 process 관련 함수들이 실제 유저프로그램의 실행과정에서 어떻게 사용되는지에 대해 알아보겠다. user program의 entry point는 ~src/lib/user/entry.c에 구현된 _start이다.
 
 ```
 // entry.c
