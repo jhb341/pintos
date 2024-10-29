@@ -305,8 +305,28 @@ pintos 주석에 쓰여진 바와 같이, run task는 argv[argc]에 저장된 �
 ### System call 
 
 (수정 필요: /thread/interrupt.c 파일 내의 함수 추가 필요..??) 
+ system call은 user program과 kernel간의 상호작용이자 user program의 의도적인 kernel의 동작 수행의 요청으로 해석할 수 있다. 따라서 system call은 memory에서 user virtual memory와 kernel virtual memory간의 상호작용을 필수적으로 수반한다. user virtual memory adress의 범위는 0부터 `PHYS_BASE`까지로 주어지며 이러한 virtual adress는 process 단위로 주어지고 user program의 `PHYS_BASE` 너머의 kernel virtual memory adress의 access가 발생할경우 page fault가 발생한다. 각 process 마다의 고유한 pointer가 있어 process와 그것의 page가 mapping되고 각 page와 실제 physical memory는 page table의 정의에 따라 mapping된다. user program이 사용하는 user virtual memory는 user stack, heap, data, text로 구성된다. `PHYS_BASE`부터는 kernel virtual memory가 고유한 1GB의 크기를 차지한다. pintos guide에 따르면 user virtual memory와는 달리 kernel virtual memory의 경우 모든 process가 하나의 단일한 physical memory와 direct mapping되어 있으며 이때 kernel virtual memory adress의 `PHYS_BASE`는 0x0지점으로 mapping된다.
+ 예를들어, src/tests/userprog의 user program에서 syscall이 요청되면 src/lib/user/syscall.c의 syscall함수(e.g, `halt`)가 호출된다. 이는 argument의 수에 따라 `syscall0`, `syscall1`, ..., `syscall3`중 하나로 arguments를 전달하고 호출하며 이는 어셈블리어를 통해 system call number을 stack에 push하여 kernel로 하여금 system call number를 처리할 수 있도록 저장하고 int $0x30을 이용해 pintos system call interrupt를 처리하도록 한다. 요컨대, `syscallN`은 N개의 arguments와 system call number를 전달받아 이를 스택에 저장하고 kernel에 전달함으로서 해당 system call을 호출하고 처리된 후 %eax에 반환된 결과를 retval에 저장하여 반환하도록 한다. 예시로서 아래에 `syscall0`의 code implement를 보였다.
 
- exception_init()과 syscall_init() 함수에 대해 알아보았다. 먼저, 아래의 syscall_init 함수를 보면 intr_register_init 함수를 호출해 syscall interrupt를 등록했다. 그리고 intr_register_int 함수를 호출했다.
+```
+/* Invokes syscall NUMBER, passing no arguments, and returns the
+   return value as an `int'. */
+#define syscall0(NUMBER)                                        \
+        ({                                                      \
+          int retval;                                           \
+          asm volatile                                          \
+            ("pushl %[number]; int $0x30; addl $4, %%esp"       \
+               : "=a" (retval)                                  \
+               : [number] "i" (NUMBER)                          \
+               : "memory");                                     \
+          retval;                                               \
+        })
+
+```
+
+int는 pintos에서 지정된 system call을 invoke하는 instruction으로서 system call number와 arguments들이 user stack에 push 되고 `int $0x30`이 invoke되면 interrupt가 발생한다. 이는 src/threads/intr-stubs.S에 구현된바와 같이 src/threads/interrupt.c의 `intr_handler`를 호출시키며 `intr_handler`는 이어서 특정 interrupt를 handle할 수 있는 함수를 call한다. 즉 설명하고 있는 system call의 interrupt의 경우는 `syscall_handler`을 호출한다. 
+
+ 앞서 exception_init()과 syscall_init() 함수에 대해 알아보았다. 먼저, 아래의 syscall_init 함수를 보면 intr_register_init 함수를 호출해 syscall interrupt를 등록했다. 그리고 intr_register_int 함수를 호출했다.
 
 ```
  void
