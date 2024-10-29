@@ -449,7 +449,6 @@ void
  }
 ```
 
-(수정 필요: intr-stubs.S라는 어셈블리 파일 설명 적어야됨) 
 
 ```
  #ifndef THREADS_INTR_STUBS_H
@@ -472,6 +471,120 @@ void
   
  #endif /**< threads/intr-stubs.h */
 ```
+
+아래는 pintos에 구현된 intr-stubs.S의 코드이다.
+
+```
+...
+
+.func intr_entry
+intr_entry:
+	/* Save caller's registers. */
+	pushl %ds
+	pushl %es
+	pushl %fs
+	pushl %gs
+	pushal
+        
+	/* Set up kernel environment. */
+	cld			/* String instructions go upward. */
+	mov $SEL_KDSEG, %eax	/* Initialize segment registers. */
+	mov %eax, %ds
+	mov %eax, %es
+	leal 56(%esp), %ebp	/* Set up frame pointer. */
+
+	/* Call interrupt handler. */
+	pushl %esp
+.globl intr_handler
+	call intr_handler
+	addl $4, %esp
+.endfunc
+
+```
+
+ 위의 code implementation에서 intr_entry는 메인 interrupt entry point로 기능한다. 모든 인터럽트는 intrNN_stub라는 코드 조각에서 시작하며 interrupt number와 error code등의 정보를 stack에 push라고 intr_entry로 jump해서 오게된다. code는 어셈블리어로 구현되어 있으며  pushal 명령어로 caller의 레지스터 값을 스택에 푸시하여 저장한다. 이후 segment register를 커널 데이터 세그먼트로 설정하고 frame pointer를 조정하여 커널 환경 설정을 수행한다. 이후에는 실질적으로 인터럽트가 처리될 수 있도록 stack pointer를 push하고 intr_handler를 호출한다.
+ 즉, system call이 발생하면 interrupt vector number 0x30이 발생하고 이 번호에 대한 intr_entry가 호출되어 memory access 이후 intr_handler가 호출되어 처리된다. 인터럽트 처리 이후의 수행은 아래의 코드에 구현되어 있다.
+
+```
+...
+.globl intr_exit
+.func intr_exit
+intr_exit:
+        /* Restore caller's registers. */
+	popal
+	popl %gs
+	popl %fs
+	popl %es
+	popl %ds
+
+        /* Discard `struct intr_frame' vec_no, error_code,
+           frame_pointer members. */
+	addl $12, %esp
+
+        /* Return to caller. */
+	iret
+.endfunc
+```
+
+`intr_exit`은 syscall 인터럽트 처리 이후에 호출되며 저장된 caller의  레지스터값을 restore한다. (via popl) stack에서 추가로 저장된 인터럽트 관련 데이터를 제거한 후 `iret` instruction을 통해 원래의 call위치로 되돌아갈 수 있도록 한다. 즉, 다시말해 iret명령어는 일종의 interrupt return 명령으로 인터럽트 발생 이전의 user모드로 복귀할 수 있도록 한다.
+
+```
+	.data
+.globl intr_stubs
+intr_stubs:
+
+/* This implements steps 1 and 2, described above, in the common
+   case where we just push a 0 error code. */
+#define zero                                    \
+	pushl %ebp;                             \
+	pushl $0
+
+/* This implements steps 1 and 2, described above, in the case
+   where the CPU already pushed an error code. */
+#define REAL                                    \
+        pushl (%esp);                           \
+        movl %ebp, 4(%esp)
+
+/* Emits a stub for interrupt vector NUMBER.
+   TYPE is `zero', for the case where we push a 0 error code,
+   or `REAL', if the CPU pushes an error code for us. */
+#define STUB(NUMBER, TYPE)                      \
+	.text;                                  \
+.func intr##NUMBER##_stub;			\
+intr##NUMBER##_stub:                            \
+	TYPE;                                   \
+	push $0x##NUMBER;                       \
+        jmp intr_entry;                         \
+.endfunc;					\
+                                                \
+	.data;                                  \
+	.long intr##NUMBER##_stub;
+
+/* All the stubs. */
+STUB(00, zero) STUB(01, zero) STUB(02, zero) STUB(03, zero)
+...
+       /* 중략 */
+...
+STUB(fc, zero) STUB(fd, zero) STUB(fe, zero) STUB(ff, zero)
+
+```
+
+위의 구현은 stub 매크로 및 intrNN_stub에 대해 다루고 있으며 stub매크로는 0x00부터 0xff까지의 interrupt vector에 대한 stub을 정의한다. 각 stub은 해당 interrupt발생에 대해 앞서 설명한 intr_entry로의 jump이전의 initiallization을 수행한다. intrNN_stub은 각 interrupt vector에 대한 entry point로서 stack에 frame_pointer, error code, vec_no와 같은 field를 push하여 처리할 수 있도록 하고 `jmp`명령어를 통해 intr_entry로 점프하여 인터럽트 처리가 가능하도록 한다. 
+ 이러한 코드 구현은 (예시로 `syscall0`의 경우) `syscall0(NUMBER)`에서 발생한 `int $0x30` interrupt에 대해 intr30_stub이 실행되어 intr_entry로의 점프가 이루어질 수 있도록 구현한다. intr_entry에서는 위에서의 설명과 같이 필요한 레지스터와 커널 환경 설정이 수행되고 실제 인터럽트가 처리되는 `intr_handler`가 호출되어 NUMBER와 적절한 argument를 전달하여 요구되는 필요한 kernel service가 수행될 수 있도록 한다.
+
+이와 관련하여 userprog/syscall.c에 구현된  `syscall_init`을 살펴보겠다.
+
+```
+void
+syscall_init (void) 
+{
+  intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
+}
+```
+
+위의 코드 구현에서 `intr_handlers[0x30]`의 mapping은 syscall_handler임을 알 수 있다. 이로인해 위에서 호출된 intr_handler의 경우 syscall_handler의 호출로 이어진다. 그러나 syscall_handler의 경우 앞선 구현 설명에서와 같이 메세지 출력과 함께 `thread_exit`으로만 구현되어 있어 적절한 number에 따른 kernel service가 제공되도록 system call을 처리하는 기능 구현이 이루어지지 않았다. 
+
+
 
 ### File System 
 
