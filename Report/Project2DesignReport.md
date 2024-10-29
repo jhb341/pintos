@@ -3,7 +3,6 @@
 전현빈(20220259)
 
 ## Analyze the Current Implementation 
-procedure of process execution - thread init.c and userprog process.c (나중에 지우기)
 
 ### 1. Process execution 
 
@@ -35,7 +34,7 @@ int
 
 user program 초기화 과정을 확인하기 위해 먼저 tss_init() 함수와 gdt_init() 함수에 대해 알아보았다. TSS구조체와 이를 초기화하는 `tss_init()`은 ~src/userprog/tss.c에 구현되어 있다. 먼저, TSS의 구조체를 설명하자면, TSS는 "Task State Segment"를 정의하는 구조체로, kernel mode와 user mode 사이에서 context switch가 일어날 때 필요하다. 각 context 상태인 레지스터 값, 스택 포인터 등을 저장하고 복원하는 데 사용된다. 현재 사용되는 x86 OS에서는 이러한 TSS 기능이 거의 사용되지 않지만, user mode에서 interrupt가 발생하여 kernel mode로 전환될 때는 TSS가 사용된다.
 
-아래 구조체의 각 변수와 포인터들을 확인해보면, 먼저 back_link는 이전 context의 TSS 세그먼트를 가리킨다. (esp0, ss0, esp1, ss1... 모르겠음??) eip는 context switch가 되고 난 다음 실행할 instruction을 가리키는 포인터이다. (eflags 모르겠음?? 플래그 상태?) 이후 프로세서의 레지스터 값(eax, ..., edi)을 저장한다. 이 값들은 나중에 다시 현재 context로 switch될 때 사용될 것이다. (segment selector, ldt, trace 모르겠음)
+(수정) 아래 구조체의 각 변수와 포인터들을 확인해보면, 먼저 back_link는 이전 context의 TSS 세그먼트를 가리킨다. (esp0, ss0, esp1, ss1... 모르겠음??) eip는 context switch가 되고 난 다음 실행할 instruction을 가리키는 포인터이다. (eflags 모르겠음?? 플래그 상태?) 이후 프로세서의 레지스터 값(eax, ..., edi)을 저장한다. 이 값들은 나중에 다시 현재 context로 switch될 때 사용될 것이다. (segment selector, ldt, trace 모르겠음)
 
 ```
 struct tss
@@ -142,8 +141,7 @@ TSS를 초기화해준 다음 gdt를 초기화해주기 때문에, 이번에는 
  }
 ```
 
-make_seg_desc 함수를 보면, 입력으로 받아오는 base, limit, class type, dpl, granularity를 GDT에 들어갈 64비트로 저장해 반환하는 역할을 했다. 32비트인 e0과 e1에 나눠서 저장한 다음, 둘을 합쳐 64비트로 반환했다. e0에는 limit의 하위 16비트와 base의 하위 16비트를 저장했고, e1에는 base의 중간 8비트, type, class, dpl, limit의 상위 4비트, granularity, 그리고 base의 상위 8비트를 저장했다. 여기서 말하는 type 은 segment 의 유형을 나타내는 변수로 read/write 이 가능한지 등을 알려준다. 그리고 class 는 segment 의 클래스로 code/data 인지 system 인지를 확인할 때 필요하다. 
-(왜 32bit 로 두개로 나눠서 하는지 설명?? 수정 필요) 
+make_seg_desc 함수를 보면, 입력으로 받아오는 base, limit, class type, dpl, granularity를 GDT에 들어갈 64비트로 저장해 반환하는 역할을 했다. 32비트인 e0과 e1에 나눠서 저장한 다음, 둘을 합쳐 64비트로 반환했다. e0에는 limit의 하위 16비트와 base의 하위 16비트를 저장했고, e1에는 base의 중간 8비트, type, class, dpl, limit의 상위 4비트, granularity, 그리고 base의 상위 8비트를 저장했다. 여기서 말하는 type 은 segment 의 유형을 나타내는 변수로 read/write 이 가능한지 등을 알려준다. 그리고 class 는 segment 의 클래스로 code/data 인지 system 인지를 확인할 때 필요하다.  
 
 ```
  enum seg_class
@@ -211,8 +209,258 @@ make_gdtr_operand 함수는 GDT register 를 가져오는 함수로 GDT 의 크�
  }
 ```
 
-(수정 필요: 그래서 processor execution 순서어떻게 되는지 설명? 위에는 그냥 다 initiation 밖에 없는것 같은데..?) 
+(수정) 그래서 processor execution 순서어떻게 되는지 설명필요 -> process.c 파일 
 
+/src/userprg/process.c 파일에는 사용자 프로그램 실행을 위한 프로세스 생성, 시작, 종료 등의 함수들이 정의되어 있다. 먼저, process_execute 함수는 인자로 전달받은 file_name을 이용해 새로운 스레드를 생성하고, 이후 start_process 함수가 실행되도록 한다.
+
+```
+tid_t
+process_execute (const char *file_name) 
+{
+  char *fn_copy;
+  tid_t tid;
+
+  /* Make a copy of FILE_NAME.
+     Otherwise there's a race between the caller and load(). */
+  fn_copy = palloc_get_page (0);
+  if (fn_copy == NULL)
+    return TID_ERROR;
+  strlcpy (fn_copy, file_name, PGSIZE);
+
+  /* Create a new thread to execute FILE_NAME. */
+  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  if (tid == TID_ERROR)
+    palloc_free_page (fn_copy); 
+  return tid;
+}
+```
+
+위에서 thread_create를 통해 생성된 스레드는 start_process 함수를 실행하게 되며, 이 함수는 사용자 프로그램을 로드하고 실행하는 역할을 한다. 이후 설명할 load 함수를 통해 실행 파일이 메모리에 로드된 후, 사용자 모드로 전환되어 프로그램이 진행된다.
+
+```
+static void
+start_process (void *file_name_)
+{
+  char *file_name = file_name_;
+  struct intr_frame if_;
+  bool success;
+
+  /* Initialize interrupt frame and load executable. */
+  memset (&if_, 0, sizeof if_);
+  if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
+  if_.cs = SEL_UCSEG;
+  if_.eflags = FLAG_IF | FLAG_MBS;
+  success = load (file_name, &if_.eip, &if_.esp);
+
+  /* If load failed, quit. */
+  palloc_free_page (file_name);
+  if (!success) 
+    thread_exit ();
+
+  /* Start the user process by simulating a return from an
+     interrupt, implemented by intr_exit (in
+     threads/intr-stubs.S).  Because intr_exit takes all of its
+     arguments on the stack in the form of a `struct intr_frame',
+     we just point the stack pointer (%esp) to our stack frame
+     and jump to it. */
+  asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory");
+  NOT_REACHED ();
+}
+```
+
+process_wait 함수는 특정 스레드의 종료를 기다린 후 해당 스레드의 종료 상태를 반환하는 함수지만, 현재는 -1을 반환하도록 구현되어 있다. 이번 프로젝트 2-2에서는 이 함수의 수정 사항을 설명할 것이다.
+
+```
+int
+process_wait (tid_t child_tid UNUSED) 
+{
+  return -1;
+}
+```
+
+process_exit 함수는 스레드가 종료될 때 호출되어, 현재 프로세스의 자원을 메모리에서 해제하고 커널 페이지 디렉터리로 전환하는 역할을 한다. 먼저, 현재 스레드의 페이지 디렉터리를 null로 설정하여 인터럽트가 발생하더라도 해당 페이지 디렉터리를 사용할 수 없도록 하고, 이후 커널 모드로 올바르게 전환되도록 페이지 디렉터리를 활성화한다. 마지막으로 null로 설정된 페이지 디렉터리를 메모리에서 해제한다. 이 순서로 진행해야 인터럽트 발생 시 문제를 방지하고, 메모리를 올바르게 해제할 수 있다.
+
+```
+void
+process_exit (void)
+{
+  struct thread *cur = thread_current ();
+  uint32_t *pd;
+
+  /* Destroy the current process's page directory and switch back
+     to the kernel-only page directory. */
+  pd = cur->pagedir;
+  if (pd != NULL) 
+    {
+      /* Correct ordering here is crucial.  We must set
+         cur->pagedir to NULL before switching page directories,
+         so that a timer interrupt can't switch back to the
+         process page directory.  We must activate the base page
+         directory before destroying the process's page
+         directory, or our active page directory will be one
+         that's been freed (and cleared). */
+      cur->pagedir = NULL;
+      pagedir_activate (NULL);
+      pagedir_destroy (pd);
+    }
+}
+```
+
+다음으로, process_activate 함수는 컨텍스트 스위치가 발생할 때 현재 스레드의 페이지 디렉터리를 활성화하고 TSS를 업데이트해 준다.
+
+```
+void
+process_activate (void)
+{
+  struct thread *t = thread_current ();
+
+  /* Activate thread's page tables. */
+  pagedir_activate (t->pagedir);
+
+  /* Set thread's kernel stack for use in processing
+     interrupts. */
+  tss_update ();
+}
+```
+
+load 함수는 앞서 설명한 start_process에서 호출되어 ELF 실행 파일을 로드하는 역할을 한다. 페이지 디렉터리를 생성한 후, process_activate 함수를 통해 해당 프로세스의 페이지 디렉터리를 활성화한다. 이어서, 인자로 전달된 파일 이름에 해당하는 파일을 열고 ELF 헤더를 읽어온다. 이후 if 문을 통해 ELF 포맷에 맞는지 확인하고, 문제가 없다면 for 루프를 통해 프로그램 헤더를 읽고 각 세그먼트를 로드한다. 그런 다음, 아래에서 설명할 setup_stack 함수를 호출해 사용자 모드에서 실행될 스택을 초기화하고 스택 포인터를 설정한다. 마지막으로 프로그램의 시작 주소를 eip 포인터가 가리키도록 설정한 후 파일을 닫고 성공 여부를 반환한다.  
+
+```
+bool
+load (const char *file_name, void (**eip) (void), void **esp) 
+{
+  struct thread *t = thread_current ();
+  struct Elf32_Ehdr ehdr;
+  struct file *file = NULL;
+  off_t file_ofs;
+  bool success = false;
+  int i;
+
+  /* Allocate and activate page directory. */
+  t->pagedir = pagedir_create ();
+  if (t->pagedir == NULL) 
+    goto done;
+  process_activate ();
+
+  /* Open executable file. */
+  file = filesys_open (file_name);
+  if (file == NULL) 
+    {
+      printf ("load: %s: open failed\n", file_name);
+      goto done; 
+    }
+
+  /* Read and verify executable header. */
+  if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
+      || memcmp (ehdr.e_ident, "\177ELF\1\1\1", 7)
+      || ehdr.e_type != 2
+      || ehdr.e_machine != 3
+      || ehdr.e_version != 1
+      || ehdr.e_phentsize != sizeof (struct Elf32_Phdr)
+      || ehdr.e_phnum > 1024) 
+    {
+      printf ("load: %s: error loading executable\n", file_name);
+      goto done; 
+    }
+
+  /* Read program headers. */
+  file_ofs = ehdr.e_phoff;
+  for (i = 0; i < ehdr.e_phnum; i++) 
+    {
+      struct Elf32_Phdr phdr;
+
+      if (file_ofs < 0 || file_ofs > file_length (file))
+        goto done;
+      file_seek (file, file_ofs);
+
+      if (file_read (file, &phdr, sizeof phdr) != sizeof phdr)
+        goto done;
+      file_ofs += sizeof phdr;
+      switch (phdr.p_type) 
+        {
+        case PT_NULL:
+        case PT_NOTE:
+        case PT_PHDR:
+        case PT_STACK:
+        default:
+          /* Ignore this segment. */
+          break;
+        case PT_DYNAMIC:
+        case PT_INTERP:
+        case PT_SHLIB:
+          goto done;
+        case PT_LOAD:
+          if (validate_segment (&phdr, file)) 
+            {
+              bool writable = (phdr.p_flags & PF_W) != 0;
+              uint32_t file_page = phdr.p_offset & ~PGMASK;
+              uint32_t mem_page = phdr.p_vaddr & ~PGMASK;
+              uint32_t page_offset = phdr.p_vaddr & PGMASK;
+              uint32_t read_bytes, zero_bytes;
+              if (phdr.p_filesz > 0)
+                {
+                  /* Normal segment.
+                     Read initial part from disk and zero the rest. */
+                  read_bytes = page_offset + phdr.p_filesz;
+                  zero_bytes = (ROUND_UP (page_offset + phdr.p_memsz, PGSIZE)
+                                - read_bytes);
+                }
+              else 
+                {
+                  /* Entirely zero.
+                     Don't read anything from disk. */
+                  read_bytes = 0;
+                  zero_bytes = ROUND_UP (page_offset + phdr.p_memsz, PGSIZE);
+                }
+              if (!load_segment (file, file_page, (void *) mem_page,
+                                 read_bytes, zero_bytes, writable))
+                goto done;
+            }
+          else
+            goto done;
+          break;
+        }
+    }
+
+  /* Set up stack. */
+  if (!setup_stack (esp))
+    goto done;
+
+  /* Start address. */
+  *eip = (void (*) (void)) ehdr.e_entry;
+
+  success = true;
+
+ done:
+  /* We arrive here whether the load is successful or not. */
+  file_close (file);
+  return success;
+}
+```
+
+위에서 설명한 바와 같이, setup_stack 함수는 사용자 모드에서 사용할 스택을 palloc을 통해 메모리에 할당한 후, 스택 포인터(esp)가 PHYS_BASE를 가리키도록 설정한다. PHYS_BASE는 메모리의 가장 상단 주소로, 스택은 상단에서 아래로 확장되며 사용된다. 이후, install_page 함수의 성공 여부를 반환한다.
+
+```
+static bool
+setup_stack (void **esp) 
+{
+  uint8_t *kpage;
+  bool success = false;
+
+  kpage = palloc_get_page (PAL_USER | PAL_ZERO);
+  if (kpage != NULL) 
+    {
+      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
+      if (success)
+        *esp = PHYS_BASE;
+      else
+        palloc_free_page (kpage);
+    }
+  return success;
+}
+```
+
+(수정) 
 여기까지에 대한 내용은 main()에서의 초기화 과정에 대한 설명이다. 지금부터는 실제 유저프로그램의 실행과정에 대해 알아보겠다.
 user program의 entry point는 ~src/lib/user/entry.c에 구현된 `_start`이다. 
 
@@ -298,13 +546,8 @@ run_task (char **argv)
 
 pintos 주석에 쓰여진 바와 같이, run task는 argv[argc]에 저장된 명령중 argv[1]을 시행한다. 이때 argv[0]은 run이기 때문이다. 
 
-
-
-
-
 ### System call 
 
-(수정 필요: /thread/interrupt.c 파일 내의 함수 추가 필요..??) 
  system call은 user program과 kernel간의 상호작용이자 user program의 의도적인 kernel의 동작 수행의 요청으로 해석할 수 있다. 따라서 system call은 memory에서 user virtual memory와 kernel virtual memory간의 상호작용을 필수적으로 수반한다. user virtual memory adress의 범위는 0부터 `PHYS_BASE`까지로 주어지며 이러한 virtual adress는 process 단위로 주어지고 user program의 `PHYS_BASE` 너머의 kernel virtual memory adress의 access가 발생할경우 page fault가 발생한다. 각 process 마다의 고유한 pointer가 있어 process와 그것의 page가 mapping되고 각 page와 실제 physical memory는 page table의 정의에 따라 mapping된다. user program이 사용하는 user virtual memory는 user stack, heap, data, text로 구성된다. `PHYS_BASE`부터는 kernel virtual memory가 고유한 1GB의 크기를 차지한다. pintos guide에 따르면 user virtual memory와는 달리 kernel virtual memory의 경우 모든 process가 하나의 단일한 physical memory와 direct mapping되어 있으며 이때 kernel virtual memory adress의 `PHYS_BASE`는 0x0지점으로 mapping된다.
  예를들어, src/tests/userprog의 user program에서 syscall이 요청되면 src/lib/user/syscall.c의 syscall함수(e.g, `halt`)가 호출된다. 이는 argument의 수에 따라 `syscall0`, `syscall1`, ..., `syscall3`중 하나로 arguments를 전달하고 호출하며 이는 어셈블리어를 통해 system call number을 stack에 push하여 kernel로 하여금 system call number를 처리할 수 있도록 저장하고 int $0x30을 이용해 pintos system call interrupt를 처리하도록 한다. 요컨대, `syscallN`은 N개의 arguments와 system call number를 전달받아 이를 스택에 저장하고 kernel에 전달함으로서 해당 system call을 호출하고 처리된 후 %eax에 반환된 결과를 retval에 저장하여 반환하도록 한다. 예시로서 아래에 `syscall0`의 code implement를 보였다.
 
@@ -587,9 +830,6 @@ syscall_init (void)
 
 
 ### File System 
-
-![image](https://github.com/user-attachments/assets/fdd3c960-c2ec-4e6a-a820-38a7e4cb022d)\
-(뭔가 이런 느낌의 disk 와 sector 설명하는 그림 들어가면 좋을 것 같음, 나중에 지우기) 
 
 먼저, file system의 주요 구조체 세 가지에 대해 알아보았다. 첫 번째로, inode 구조체는 file system에서 파일이나 디렉토리 정보를 저장하는 역할을 한다. elem은 여러 inode를 연결한 리스트 요소이며, sector는 해당 inode가 디스크의 어떤 섹터에 저장되어 있는지를 나타내는 정수값이다. open_cnt는 현재 열려 있는 inode의 개수를 나타내며, 이는 파일이나 디렉토리가 몇 번 열려 있는지를 알려준다. removed는 해당 inode가 삭제되었는지 여부를 나타내며, deny_write_cnt는 파일에 대한 쓰기 작업 허용 여부를 관리하는 변수이다. 마지막으로, data는 아래에서 설명할 inode_disk 구조체를 가리키는 변수로, 실제 파일의 데이터를 저장한다.
 
@@ -1407,9 +1647,17 @@ dir_remove (struct dir *dir, const char *name)
 how to solve problems (나중에 지우기)
 data structure and detailed algorithm (나중에 지우기)
 
-1. process termination messages
-     printf ("%s: exit(%d)\n", process_name, exit_code); 이걸 유저 프로세스가 종료될 때마다 출력해야함. -> sys_exit 에 함수에서 이 라인을 프린트 하면 될 것 같음. 
-3. argument passing -> process_execute 에서 받은 문자열을 파싱해서 파일이름이랑 argument 로 나누기 
-4. system call
+### 1. Process Termination Messages
+
+유저 process 가 종료될 때 마다 "printf ("%s: exit(%d)\n", process_name, exit_code);" 이 코드를 추가해주어 process termination message 를 출력해주어야한다. thread 구조체에 termination message 를 출력해야하는지 여부를 알려주는 boolean 함수를 추가한 다음 process_execute 함수를 통해 새로운 process 가 생성 됐을 경우 true 로 설정해주고, halt 나 kernel thread 가 끝날 때는 false 로 설정해줄 것이다. 그리고, thread_exit 함수에서 해당 출력 instruction 을 추가하면 될 것이다. 여기서 process_name 은 아래에서 설명할 argument passing 과정에서 thread 구조체에 저장해 줄 것이고, exit_code 역시 (수정?) 함수에서 thread 구조체에 저장해줄 예정이다. 
+
+### 2. Argument Passing 
+
+-> process_execute 에서 받은 문자열을 파싱해서 파일이름이랑 argument 로 나누기 
+
+### 3. System Call
    -> syscall_handler 함수 수정? (현재는 바로 exit 하는 식으로 구현되어있는데 여기에 handler 추가하기) 
-5. denying writes to executables -> load 사용할 때는 write deny 해두는 식으로 구현 하고 exit 될때 다시 write allow 하기 
+
+### 4. Denying Writes to Executables 
+
+filesys_open 함수에서 같은 이름 (name) 을 가진 file 을 열려고 할 때, file_deny_write 함수를 통해 해당 파일이 close 되기 전까지는 write denied 상태로 존재하고 close 된 후에 write allowed 되도록 디자인 하였다. 
