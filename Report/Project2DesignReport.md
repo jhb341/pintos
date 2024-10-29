@@ -1651,7 +1651,7 @@ data structure and detailed algorithm (나중에 지우기)
 
 ### 2. Argument Passing 
 
-process_execute 함수는 현재 "file_name"으로 문자열 전체를 받아오지만, 이 문자열을 파일 이름과 인자로 구분하는 과정이 필요하다. /src/lib/string.c의 strtok_r() 함수를 사용하여 파일 이름과 인자를 분리하고, start_process를 호출할 때 스택에 인자들을 추가한 후 스택을 전달하는 방식으로 구현할 예정이다. 이를 위해 파싱된 인자들을 스택에 추가하는 함수를 만들고, 이 함수를 start_process 함수에서 성공 시 실행되도록 설계하였다.
+process_execute 함수는 현재 "file_name"으로 문자열 전체를 받아오지만, 이 문자열을 파일 이름과 인자로 구분하는 과정이 필요하다. /src/lib/string.c의 strtok_r() 함수를 사용하여 파일 이름과 인자를 분리하고, start_process를 호출할 때 스택에 인자들을 추가한 후 스택을 전달하는 방식으로 구현할 예정이다. 이를 위해 파싱된 인자들을 스택에 추가하는 함수를 만들고, 이 함수를 start_process 함수에서 성공 시(if (success) {...}) 실행되도록 수정할 예정이다.
 
 ```
 char *
