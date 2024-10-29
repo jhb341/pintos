@@ -1695,7 +1695,8 @@ strtok_r (char *s, const char *delimiters, char **save_ptr)
 ```
 
 ### 3. System Call
-   -> syscall_handler 함수 수정? (현재는 바로 exit 하는 식으로 구현되어있는데 여기에 handler 추가하기) 
+현재는 `syscall_handler`가 바로 exit하는 방식으로 구현되어 있으므로 이부분을 우선적으로 수정해주어야 한다. 우선 `intr_frame`의 esp값을 읽어와 stack에 user program이 push한 arguments, system call number를 4byte단위로 읽어와 정보를 stack또는 queue에 복사하여 저장해 처리해야 하는 system call에 대한 정보를 syscall_handler에 저장해야한다. 이후 syscall_handler에 각 system call number에 해당하는 helper함수를 정의하고 구현하여 각 number에 맞는 system call 을 각 helper함수가 처리할 수 있도록 구현한다. (e.g., `sys_exit_helper`등) 이처럼 systemcall number와 arguments를 적절한 helper함수에 전달하여 반환한 return value를  intr_frame의 eax에 저장할 수 있도록 구현할 것이다. 
+
 
 ### 4. Denying Writes to Executables 
 
