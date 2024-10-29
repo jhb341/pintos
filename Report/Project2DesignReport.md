@@ -34,8 +34,6 @@ int
 
 user program 초기화 과정을 확인하기 위해 먼저 tss_init() 함수와 gdt_init() 함수에 대해 알아보았다. TSS구조체와 이를 초기화하는 `tss_init()`은 ~src/userprog/tss.c에 구현되어 있다. 먼저, TSS의 구조체를 설명하자면, TSS는 "Task State Segment"를 정의하는 구조체로, kernel mode와 user mode 사이에서 context switch가 일어날 때 필요하다. 각 context 상태인 레지스터 값, 스택 포인터 등을 저장하고 복원하는 데 사용된다. 현재 사용되는 x86 OS에서는 이러한 TSS 기능이 거의 사용되지 않지만, user mode에서 interrupt가 발생하여 kernel mode로 전환될 때는 TSS가 사용된다.
 
-(수정) 아래 구조체의 각 변수와 포인터들을 확인해보면, 먼저 back_link는 이전 context의 TSS 세그먼트를 가리킨다. (esp0, ss0, esp1, ss1... 모르겠음??) eip는 context switch가 되고 난 다음 실행할 instruction을 가리키는 포인터이다. (eflags 모르겠음?? 플래그 상태?) 이후 프로세서의 레지스터 값(eax, ..., edi)을 저장한다. 이 값들은 나중에 다시 현재 context로 switch될 때 사용될 것이다. (segment selector, ldt, trace 모르겠음)
-
 ```
 struct tss
    {
@@ -61,6 +59,7 @@ struct tss
      uint16_t trace, bitmap;
    };
 ```
+위는 tss structure의 구현이다.  tss는 각 task의 status와 관련된 정보를 저장하고 관리한다. `back_link`는 이전 task의 tss segment selector로서 task간의 linked list data structure에서 previous task로의 pointer이다. `esp0`는 kernel mode에서 사용하는 stack pointer로서 kernel mode로 전환될 때 사용하는 stack의 주소를 저장한다. `ss0`는 stack segment selector로서 kernel mode에서 사용되는 stack segment를 정의한다. `cr3`는 PageDirectoryBaseRegister의 주소로 페이지 디렉토리의 physical adress를 저장하여 memory management와 adress 변환에 사용된다. eip는 next instruction의 주소이며 eax, ecx, 등은 범용 레지스터이다. 이같은 tss 구조체는 하나의 task의 상태 정보를 저장하여 새로운 태스크의 상태를 restore하거나 current task의 정보를 저장한다. 이는 kernel이 task switching을 하는 과정에서 register, segment 정보를 손실하지 않도록 돕는다.
 
 main 함수에서 사용된 tss_init 함수는 위에서 소개한 TSS를 초기화하는 함수였다. 먼저 palloc을 사용해 TSS를 위한 메모리를 할당했다. 그리고 kernel mode에서 사용하는 stack segment selector인 ss0을 SEL_KDSEG로 초기화해주었다. SEL_KDSEG는 kernel data segment를 가리킨다고 한다. 그 다음, I/O 접근을 허용하거나 제한할 때 사용하는 bitmask인 bitmap을 0xdfff로 초기화해주었다. 이후 아래에서 설명한 tss_update 함수를 통해 현재 TSS의 esp0 값을 업데이트해주었다. esp0은 kernel mode stack pointer로, user mode에서 kernel mode로 전환될 때 사용할 stack 위치를 설정해준다. kernel mode에서는 stack이 위에서 아래로 쌓이기 때문에 esp0에는 현재 thread 주소에 PGSIZE를 더해 최상단 주소를 저장해주었다.
 
