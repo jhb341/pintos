@@ -207,9 +207,7 @@ make_gdtr_operand 함수는 GDT register 를 가져오는 함수로 GDT 의 크�
  {
    return limit | ((uint64_t) (uint32_t) base << 16);
  }
-```
-
-(수정) 그래서 processor execution 순서어떻게 되는지 설명필요 -> process.c 파일 
+``` 
 
 /src/userprg/process.c 파일에는 사용자 프로그램 실행을 위한 프로세스 생성, 시작, 종료 등의 함수들이 정의되어 있다. 먼저, process_execute 함수는 인자로 전달받은 file_name을 이용해 새로운 스레드를 생성하고, 이후 start_process 함수가 실행되도록 한다.
 
