@@ -56,11 +56,44 @@ process_execute (const char *file_name)
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
+  // fn_copy는 전체 입력 커맨드
+
+  /* 현재 로직 */
+  // file_name으로 전체 커맨드를 받아옴
+  // fn_copy에 file_name을 복사함.
+  // thread_create에 (원본 커맨드, .. , 전체 커맨드)를 넘겨서 실행
+  // --> 이게 (파싱된 파일 이름, .., 전체 커맨드) 가 되어야 함. 
+  // 주의: race 때문에 어지간하면 복사해서 쓸것!
+
+  char *fn_parsing; // 여기에 file_name을 복사하고, parsing해서 첫번째 토큰만 남기고 다 날려야 함.
+  fn_parsing = palloc_get_page (0);
+  if(fn_parsing == NULL){
+    return TID_ERROR;
+  }
+  strlcpy(fn_parsing, file_name, PGSIZE);
+
+  /* 여기에서 파싱하고 첫번째 토큰만 남기고 나머지 버림 */
+  // 어떻게? -> use strtok_r
+  char *tmp;
+  fn_parsing = strtok_r(fn_parsing, " ", &tmp);
+
+  /* 여기까지 진행했으면.. */
+  // fn_parsing : 실행할 파일의 이름 (첫번째 토큰)
+  // fn_copy : 전체 커맨드
+
+
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
-  if (tid == TID_ERROR)
-    palloc_free_page (fn_copy); 
+  //tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create (fn_parsing, PRI_DEFAULT, start_process, fn_copy); // new!
+  
+  
+  if (tid == TID_ERROR){
+      palloc_free_page (fn_copy);
+  }else{
+    // ..?
+  }
+  palloc_free_page(fn_parsing); // 메모리 해제
   return tid;
 }
 
@@ -93,8 +126,65 @@ start_process (void *file_name_)
   //success = load (file_name, &if_.eip, &if_.esp); // old
   success = load (argv[0], &if_.eip, &if_.esp); // new
 
+  // If load success..?
+  if(success){
+    /* 여기에서 args passing implement!! */
+    // setup stack!!
+    // ---------
+    //     |
+    //     |
+    //     v
+    //    push 방향
+
+    /* argv[argc-1][data]부터 argv[0][data]까지 내림차순으로 argv[i][data] 푸시 */
+    for(int i = argc - 1; i >= 0; i--){
+      if_.esp -= strlen(argv[i]) + 1; // 문자열 길이만큼 스택 감소
+      memcpy(if_.esp, argv[i], strlen(argv[i] + 1)); // Copy string to stack
+      argv[i] = if_.esp;
+    }
+
+    /* 4byte align setup */
+    uintptr_t align = (uintptr_t)(if_.esp) % 4;
+    if (align) {
+      if_.esp -= align;
+      memset(if_.esp, 0, align); // Align stack pointer
+    }
+
+    /* argv[argc] push, 이때 NULL을 푸시해야함! */
+    if_.esp -= sizeof(char *);
+    *(uint32_t *)(if_.esp) = 0;  // NULL
+
+    /* argv[argc-1]부터 argv[0]까지 차례대로 푸시 */
+    for (int i = argc - 1; i >= 0; i--){
+      if_.esp -= sizeof(char *);
+      *(uint32_t *)(if_.esp) = (uint32_t)argv[i]; // argv[i]의 주소
+    }
+
+    /* argv push */
+    if_.esp -= sizeof(char **);
+    *(uint32_t *)(if_.esp) = (uint32_t)(if_.esp + sizeof(char *));
+
+    /* argc push */
+    if_.esp -= sizeof(int);
+    *(uint32_t *)(if_.esp) = argc;
+
+    /* return address push*/
+    if_.esp -= sizeof(void *);
+    *(uint32_t *)(if_.esp) = 0;
+
+    /* END */
+  }
+
+  //
+
   /* If load failed, quit. */
   palloc_free_page (file_name); // file_name에 할당된 메모리 해제
+  // file_name을 argv으로 바꾸어야 함.
+  palloc_free_page(argv); // or,,, free(argv) ..?
+
+  //sema_up(&((thread_current ()->process_manager)->sema_load));
+  sema_up(&(thread_current()->process_manager.sema_load));
+  
   if (!success) // 실패시 exit!
     thread_exit ();
 

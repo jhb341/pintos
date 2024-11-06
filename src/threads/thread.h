@@ -4,6 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "threads/synch.h"
 
 
 /* States in a thread's life cycle. */
@@ -33,6 +34,17 @@ struct inherit_manager
    struct list_elem inheritor; /* 내가 상속해주는 스레드의 상속리스트에 적을 이름표 */
    struct lock *target_lock; /* 내가 대기중인 lock */
 
+};
+
+struct user_process_manager
+{
+   int exit_syscall_num;
+   struct file *exc_file;
+   struct thread *my_parent;
+   struct list my_child_list;
+   struct list_elem child_list_elem;
+   struct semaphore sema_wait;
+   struct semaphore sema_load;
 };
             
 /* Values for Advance Scheduler */               
@@ -168,9 +180,11 @@ struct thread
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
+    struct user_process_manager process_manager;
 #ifdef USERPROG
-    /* Owned by userprog/process.c. */
-    uint32_t *pagedir;                  /* Page directory. */
+   /* Owned by userprog/process.c. */
+   uint32_t *pagedir;                  /* Page directory. */
+   
 #endif
 
     /* Owned by thread.c. */
