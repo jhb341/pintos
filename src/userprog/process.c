@@ -114,6 +114,11 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+
+    /* New code start HERE! */
+    printf("TERMINATION MESSAGE HERE! \n");
+    //printf("%s:exit(%d)\n",process_name,exit_code);
+    /* End */
 }
 
 /* Sets up the CPU for running user code in the current
