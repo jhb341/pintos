@@ -50,7 +50,7 @@ process_execute (const char *file_name)
 static void
 start_process (void *file_name_)
 {
-  char *file_name = file_name_;
+  char *file_name = file_name_; // file_name_이 input_command임.
   struct intr_frame if_;
   bool success;
 
@@ -59,7 +59,17 @@ start_process (void *file_name_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (file_name, &if_.eip, &if_.esp);
+  /* 여기서 인풋 명령어 parsing */
+
+  /* argv 선언 되어야 함!!*/
+  int argc;
+  argc = parse_input_cmd(file_name,argv);  // parse_input_cmd()는 구현 예정
+
+  // argv[0]은 파일네임
+
+  /* end parsing */ 
+  //success = load (file_name, &if_.eip, &if_.esp); // old
+  success = load (argv[0], &if_.eip, &if_.esp); // new
 
   /* If load failed, quit. */
   palloc_free_page (file_name);
