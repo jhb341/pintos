@@ -21,6 +21,25 @@
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 
+/* My Functions! */
+int
+parse_input_cmd(char *file_name, char **argv)
+{
+  int argc = 0; // # of tokens in input cmd. will be returned
+  char *tkn;
+  char *nxt_tkn; 
+
+  for(tkn = strtok_r(file_name, " ", &nxt_tkn); tkn != NULL; tkn = strtok_r(NULL, " ", &nxt_tkn)){
+    //argc++; // increase argc
+    argv[argc] = tkn;
+    argc++; // increase argc AFTER store tkn
+  }
+
+  return argc;
+}
+
+/* End here */
+
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
@@ -50,6 +69,8 @@ process_execute (const char *file_name)
 static void
 start_process (void *file_name_)
 {
+  // 주의: start_process는 process_execute에서 호출하는 콜리임!
+
   char *file_name = file_name_; // file_name_이 input_command임.
   struct intr_frame if_;
   bool success;
@@ -61,7 +82,8 @@ start_process (void *file_name_)
   if_.eflags = FLAG_IF | FLAG_MBS;
   /* 여기서 인풋 명령어 parsing */
 
-  /* argv 선언 되어야 함!!*/
+      /* 여기서 argv 선언 되어야 함!!*/
+  char *argv[128];  // 적절한 크기로 설정, 여기서는 128개로 가정. 아마도 palloc_get_page(smth)..?
   int argc;
   argc = parse_input_cmd(file_name,argv);  // parse_input_cmd()는 구현 예정
 
@@ -72,8 +94,8 @@ start_process (void *file_name_)
   success = load (argv[0], &if_.eip, &if_.esp); // new
 
   /* If load failed, quit. */
-  palloc_free_page (file_name);
-  if (!success) 
+  palloc_free_page (file_name); // file_name에 할당된 메모리 해제
+  if (!success) // 실패시 exit!
     thread_exit ();
 
   /* Start the user process by simulating a return from an
