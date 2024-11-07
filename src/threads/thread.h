@@ -5,6 +5,8 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/synch.h"
+//#include "userprog/process.h"
+
 
 
 /* States in a thread's life cycle. */
@@ -38,13 +40,13 @@ struct inherit_manager
 
 struct user_process_manager
 {
-   int exit_syscall_num;
-   struct file *exc_file;
-   struct thread *my_parent;
-   struct list my_child_list;
-   struct list_elem child_list_elem;
-   struct semaphore sema_wait;
-   struct semaphore sema_load;
+   int exit_syscall_num;               /* syscall중 exit시의 number */
+   struct file *exc_file;              /* process가 실행하는 file */
+   struct thread *my_parent;           /* 내 부모 프로세스 */
+   struct list my_child_list;          /* 내 자식 프로세스들의 리스트 */
+   struct list_elem child_list_elem;   /* 내가 자식으로 있는 부모 프로세스의 자식 리스트에 연결할 대기표 */
+   struct semaphore sema_wait;         /* ? */
+   struct semaphore sema_load;         /* 내가 load하는 동안 내 부모가 안꺼지게 하는 세마포 */
 };
             
 /* Values for Advance Scheduler */               

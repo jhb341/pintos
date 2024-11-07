@@ -30,11 +30,10 @@ parse_input_cmd(char *file_name, char **argv)
   char *nxt_tkn; 
 
   for(tkn = strtok_r(file_name, " ", &nxt_tkn); tkn != NULL; tkn = strtok_r(NULL, " ", &nxt_tkn)){
-    //argc++; // increase argc
+    /* for문을 돌면서 입력 커맨드를 띄어쓰기 기준으로 토큰으로 분리해서 argv에 저장, argc를 카운트 */
     argv[argc] = tkn;
     argc++; // increase argc AFTER store tkn
   }
-
   return argc;
 }
 
@@ -63,7 +62,7 @@ process_execute (const char *file_name)
   // fn_copy에 file_name을 복사함.
   // thread_create에 (원본 커맨드, .. , 전체 커맨드)를 넘겨서 실행
   // --> 이게 (파싱된 파일 이름, .., 전체 커맨드) 가 되어야 함. 
-  // 주의: race 때문에 어지간하면 복사해서 쓸것!
+  // 주의: race 때문에 어지간하면 복사해서 쓸것! -> 그러니까, 경쟁을 방지하기 위해서 무조건 복사해서 쓴다는 느낌
 
   char *fn_parsing; // 여기에 file_name을 복사하고, parsing해서 첫번째 토큰만 남기고 다 날려야 함.
   fn_parsing = palloc_get_page (0);
@@ -86,12 +85,44 @@ process_execute (const char *file_name)
   /* Create a new thread to execute FILE_NAME. */
   //tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
   tid = thread_create (fn_parsing, PRI_DEFAULT, start_process, fn_copy); // new!
-  
+  /* thread_create는? */
+  // 만약 page할당 실패시, TID_ERROR를  return
+  // 
   
   if (tid == TID_ERROR){
       palloc_free_page (fn_copy);
   }else{
     // ..?
+    // 자녀의 sema load 대기
+    /* 여기서 자녀 스레드의 sema_load 를 sema up */
+    //sema_down(&(this_thread->sema_load));
+
+     int child_num; // child thread의 exit systemcall num
+
+ /* start */     
+ struct thread *curr = thread_current();
+ struct list *my_child_list = &(curr->process_manager.my_child_list);
+ struct list_elem *e = NULL;
+ struct thread *this_thread = NULL;
+
+ for(e = list_begin(my_child_list); e != list_end(my_child_list); list_next(e)){
+  this_thread = list_entry(e, struct thread, process_manager.child_list_elem);
+  if(this_thread->tid == tid){
+    // 맞는 경우
+    //sema_down(&(this_thread->process_manager.sema_wait));
+    //child_num = this_thread->process_manager.exit_syscall_num;
+    //list_remove(&(this_thread->process_manager.child_list_elem));
+    // 이제 자식 메모리 free시켜줘야됨
+    //palloc_free_page(this_thread->process_manager);
+    //palloc_free_page(this_thread);
+    sema_down(&(this_thread->process_manager.sema_load));
+  }else{
+    //child_num = -1;
+  }
+ }
+  /* end */
+  
+
   }
   palloc_free_page(fn_parsing); // 메모리 해제
   return tid;
@@ -210,8 +241,43 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
-  return -1;
-}
+ /*
+  스레드 TID종료시까지 대기하기. 
+  해당 스레드의 exit status를 리턴
+  스레드 강제종료 (by kernel)시 -1
+  예외처리로 -1
+
+  input: 
+  */  
+ int child_num; // child thread의 exit systemcall num
+ struct thread *curr = thread_current();
+ struct list *my_child_list = &(curr->process_manager.my_child_list);
+ struct list_elem *e = NULL;
+ struct thread *this_thread = NULL;
+
+ for(e = list_begin(my_child_list); e != list_end(my_child_list); list_next(e)){
+  this_thread = list_entry(e, struct thread, process_manager.child_list_elem);
+  if(this_thread->tid == child_tid){
+    // 맞는 경우
+    sema_down(&(this_thread->process_manager.sema_wait));
+    child_num = this_thread->process_manager.exit_syscall_num;
+    list_remove(&(this_thread->process_manager.child_list_elem));
+    // 이제 자식 메모리 free시켜줘야됨
+    //palloc_free_page(this_thread->process_manager);
+    palloc_free_page(this_thread);
+  }else{
+    child_num = -1;
+  }
+ }
+
+  //
+  return child_num;
+ }
+
+ 
+
+
+
 
 /* Free the current process's resources. */
 void
@@ -238,8 +304,10 @@ process_exit (void)
     }
 
     /* New code start HERE! */
-    printf("TERMINATION MESSAGE HERE! \n");
+    //printf("TERMINATION MESSAGE HERE! \n");
     //printf("%s:exit(%d)\n",process_name,exit_code);
+    //cur->process_manager
+    sema_up(&(cur->process_manager.sema_wait));
     /* End */
 }
 
