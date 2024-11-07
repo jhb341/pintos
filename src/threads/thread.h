@@ -4,7 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
-#include "threads/synch.h"
+#include "synch.h"
 //#include "userprog/process.h"
 
 
@@ -185,8 +185,8 @@ struct thread
     struct user_process_manager process_manager;
 #ifdef USERPROG
    /* Owned by userprog/process.c. */
-   uint32_t *pagedir;                  /* Page directory. */
-   
+   uint32_t *pagedir;                  
+   /* Page directory. */
 #endif
 
     /* Owned by thread.c. */

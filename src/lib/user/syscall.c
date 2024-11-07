@@ -1,6 +1,6 @@
 #include <syscall.h>
 #include "../syscall-nr.h"
-#include "threads/thread.h"
+
 
 /* Invokes syscall NUMBER, passing no arguments, and returns the
    return value as an `int'. */
