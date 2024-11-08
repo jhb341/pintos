@@ -21,6 +21,24 @@
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 
+/* My Functions! */
+int
+parse_input_cmd(char *file_name, char **argv)
+{
+  int argc = 0; // # of tokens in input cmd. will be returned
+  char *tkn;
+  char *nxt_tkn; 
+
+  for(tkn = strtok_r(file_name, " ", &nxt_tkn); tkn != NULL; tkn = strtok_r(NULL, " ", &nxt_tkn)){
+    /* for문을 돌면서 입력 커맨드를 띄어쓰기 기준으로 토큰으로 분리해서 argv에 저장, argc를 카운트 */
+    argv[argc] = tkn;
+    argc++; // increase argc AFTER store tkn
+  }
+  return argc;
+}
+
+/* End here */
+
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
@@ -37,11 +55,76 @@ process_execute (const char *file_name)
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
+  // fn_copy는 전체 입력 커맨드
+
+  /* 현재 로직 */
+  // file_name으로 전체 커맨드를 받아옴
+  // fn_copy에 file_name을 복사함.
+  // thread_create에 (원본 커맨드, .. , 전체 커맨드)를 넘겨서 실행
+  // --> 이게 (파싱된 파일 이름, .., 전체 커맨드) 가 되어야 함. 
+  // 주의: race 때문에 어지간하면 복사해서 쓸것! -> 그러니까, 경쟁을 방지하기 위해서 무조건 복사해서 쓴다는 느낌
+
+  char *fn_parsing; // 여기에 file_name을 복사하고, parsing해서 첫번째 토큰만 남기고 다 날려야 함.
+  fn_parsing = palloc_get_page (0);
+  if(fn_parsing == NULL){
+    return TID_ERROR;
+  }
+  strlcpy(fn_parsing, file_name, PGSIZE);
+
+  /* 여기에서 파싱하고 첫번째 토큰만 남기고 나머지 버림 */
+  // 어떻게? -> use strtok_r
+  char *tmp;
+  fn_parsing = strtok_r(fn_parsing, " ", &tmp);
+
+  /* 여기까지 진행했으면.. */
+  // fn_parsing : 실행할 파일의 이름 (첫번째 토큰)
+  // fn_copy : 전체 커맨드
+
+
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
-  if (tid == TID_ERROR)
-    palloc_free_page (fn_copy); 
+  //tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create (fn_parsing, PRI_DEFAULT, start_process, fn_copy); // new!
+  /* thread_create는? */
+  // 만약 page할당 실패시, TID_ERROR를  return
+  // 
+  
+  if (tid == TID_ERROR){
+      palloc_free_page (fn_copy);
+  }else{
+    // ..?
+    // 자녀의 sema load 대기
+    /* 여기서 자녀 스레드의 sema_load 를 sema up */
+    //sema_down(&(this_thread->sema_load));
+
+     int child_num; // child thread의 exit systemcall num
+
+ /* start */     
+ struct thread *curr = thread_current();
+ struct list *my_child_list = &(curr->process_manager.my_child_list);
+ struct list_elem *e = NULL;
+ struct thread *this_thread = NULL;
+
+ for(e = list_begin(my_child_list); e != list_end(my_child_list); list_next(e)){
+  this_thread = list_entry(e, struct thread, process_manager.child_list_elem);
+  if(this_thread->tid == tid){
+    // 맞는 경우
+    //sema_down(&(this_thread->process_manager.sema_wait));
+    //child_num = this_thread->process_manager.exit_syscall_num;
+    //list_remove(&(this_thread->process_manager.child_list_elem));
+    // 이제 자식 메모리 free시켜줘야됨
+    //palloc_free_page(this_thread->process_manager);
+    //palloc_free_page(this_thread);
+    sema_down(&(this_thread->process_manager.sema_load));
+  }else{
+    //child_num = -1;
+  }
+ }
+  /* end */
+  
+
+  }
+  palloc_free_page(fn_parsing); // 메모리 해제
   return tid;
 }
 
@@ -50,7 +133,9 @@ process_execute (const char *file_name)
 static void
 start_process (void *file_name_)
 {
-  char *file_name = file_name_;
+  // 주의: start_process는 process_execute에서 호출하는 콜리임!
+
+  char *file_name = file_name_; // file_name_이 input_command임.
   struct intr_frame if_;
   bool success;
 
@@ -59,11 +144,79 @@ start_process (void *file_name_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (file_name, &if_.eip, &if_.esp);
+  /* 여기서 인풋 명령어 parsing */
+
+      /* 여기서 argv 선언 되어야 함!!*/
+  char *argv[128];  // 적절한 크기로 설정, 여기서는 128개로 가정. 아마도 palloc_get_page(smth)..?
+  int argc;
+  argc = parse_input_cmd(file_name,argv);  // parse_input_cmd()는 구현 예정
+
+  // argv[0]은 파일네임
+
+  /* end parsing */ 
+  //success = load (file_name, &if_.eip, &if_.esp); // old
+  success = load (argv[0], &if_.eip, &if_.esp); // new
+
+  // If load success..?
+  if(success){
+    /* 여기에서 args passing implement!! */
+    // setup stack!!
+    // ---------
+    //     |
+    //     |
+    //     v
+    //    push 방향
+
+    /* argv[argc-1][data]부터 argv[0][data]까지 내림차순으로 argv[i][data] 푸시 */
+    for(int i = argc - 1; i >= 0; i--){
+      if_.esp -= strlen(argv[i]) + 1; // 문자열 길이만큼 스택 감소
+      memcpy(if_.esp, argv[i], strlen(argv[i] + 1)); // Copy string to stack
+      argv[i] = if_.esp;
+    }
+
+    /* 4byte align setup */
+    uintptr_t align = (uintptr_t)(if_.esp) % 4;
+    if (align) {
+      if_.esp -= align;
+      memset(if_.esp, 0, align); // Align stack pointer
+    }
+
+    /* argv[argc] push, 이때 NULL을 푸시해야함! */
+    if_.esp -= sizeof(char *);
+    *(uint32_t *)(if_.esp) = 0;  // NULL
+
+    /* argv[argc-1]부터 argv[0]까지 차례대로 푸시 */
+    for (int i = argc - 1; i >= 0; i--){
+      if_.esp -= sizeof(char *);
+      *(uint32_t *)(if_.esp) = (uint32_t)argv[i]; // argv[i]의 주소
+    }
+
+    /* argv push */
+    if_.esp -= sizeof(char **);
+    *(uint32_t *)(if_.esp) = (uint32_t)(if_.esp + sizeof(char *));
+
+    /* argc push */
+    if_.esp -= sizeof(int);
+    *(uint32_t *)(if_.esp) = argc;
+
+    /* return address push*/
+    if_.esp -= sizeof(void *);
+    *(uint32_t *)(if_.esp) = 0;
+
+    /* END */
+  }
+
+  //
 
   /* If load failed, quit. */
-  palloc_free_page (file_name);
-  if (!success) 
+  palloc_free_page (file_name); // file_name에 할당된 메모리 해제
+  // file_name을 argv으로 바꾸어야 함.
+  palloc_free_page(argv); // or,,, free(argv) ..?
+
+  //sema_up(&((thread_current ()->process_manager)->sema_load));
+  sema_up(&(thread_current()->process_manager.sema_load));
+  
+  if (!success) // 실패시 exit!
     thread_exit ();
 
   /* Start the user process by simulating a return from an
@@ -88,8 +241,43 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
-  return -1;
-}
+ /*
+  스레드 TID종료시까지 대기하기. 
+  해당 스레드의 exit status를 리턴
+  스레드 강제종료 (by kernel)시 -1
+  예외처리로 -1
+
+  input: 
+  */  
+ int child_num; // child thread의 exit systemcall num
+ struct thread *curr = thread_current();
+ struct list *my_child_list = &(curr->process_manager.my_child_list);
+ struct list_elem *e = NULL;
+ struct thread *this_thread = NULL;
+
+ for(e = list_begin(my_child_list); e != list_end(my_child_list); list_next(e)){
+  this_thread = list_entry(e, struct thread, process_manager.child_list_elem);
+  if(this_thread->tid == child_tid){
+    // 맞는 경우
+    sema_down(&(this_thread->process_manager.sema_wait));
+    child_num = this_thread->process_manager.exit_syscall_num;
+    list_remove(&(this_thread->process_manager.child_list_elem));
+    // 이제 자식 메모리 free시켜줘야됨
+    //palloc_free_page(this_thread->process_manager);
+    palloc_free_page(this_thread);
+  }else{
+    child_num = -1;
+  }
+ }
+
+  //
+  return child_num;
+ }
+
+ 
+
+
+
 
 /* Free the current process's resources. */
 void
@@ -114,6 +302,13 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+
+    /* New code start HERE! */
+    //printf("TERMINATION MESSAGE HERE! \n");
+    //printf("%s:exit(%d)\n",process_name,exit_code);
+    //cur->process_manager
+    sema_up(&(cur->process_manager.sema_wait));
+    /* End */
 }
 
 /* Sets up the CPU for running user code in the current

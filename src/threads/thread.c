@@ -552,8 +552,19 @@ thread_create (const char *name, int priority,
   sf->eip = switch_entry;
   sf->ebp = 0;
 
+  /* processor manager initialize */
+  t->process_manager.exit_syscall_num = -1;
+  t->process_manager.exc_file = NULL;
+  t->process_manager.my_parent = thread_current();
+
+  sema_init(&(t->process_manager.sema_wait), 0);
+  sema_init(&(t->process_manager.sema_load), 0);
+
+  list_push_back(&(t->process_manager.my_parent->process_manager.my_child_list), &(t->process_manager.child_list_elem));
+
+  // 아래 코드에서 준비가 끝났으니까 unblock 후 thread 방출(?)
   /* Add to run queue. */
-  thread_unblock (t);
+  thread_unblock (t); 
   swap_running_thread();
 
   return tid;
