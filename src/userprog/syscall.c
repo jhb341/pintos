@@ -20,80 +20,106 @@ syscall_init (void)
 }
 
 /********** syscall helper functions (13) **********/
-// 1. halt
+void 
 shf_halt()
 {
-
+  shutdown_power_off(); 
 }
 
-// 2. exit
-shf_exit(int exit_code)
+// 2. exit -- termincate current user program, return status to the kernel 
+void
+shf_exit(int status)
 {
-
+  struct thread *current = thread_current(); 
+  currnet -> process_manager -> exit_syscall_num = status; 
+  // semaphore 처리? 
+  thread_exit(); 
 }
 
-// 3. exec
-shf_exec()
+// 3. exec -- cmd_line 에서 주어진 executable 실행 ? return new processes program id (invalid program id 일 경우 -1)
+pid_t
+shf_exec(const char* cmd_line)
 {
+  pid_t processID = process_execute(cmd_line); 
 
+  return processID; 
 }
 
-// 4. wait
-shf_wait()
+// 4. wait -- wait for child process to finish, 
+int 
+shf_wait(pid_t pid)
 {
-
+  return process_wait (pid) 
 }
 
 // 5. create
-shf_create()
-{
+//file 관련 함수 - src/filesys/filesys.c 참고 
 
+bool 
+shf_create (const char *file, unsigned initial_size)
+{
+  //create file with "initial_size" size 
+  if(file == NULL)
+    shf_exit(-1); 
+
+  return filesys_create (file, initial_size); 
 }
 
 // 6. remove
-shf_remove()
+bool 
+shf_remove (const char *file)
 {
+  if(file == NULL)
+    shf_exit(-1); 
 
+  return filesys_remove (file, initial_size); 
 }
 
 // 7. open
-shf_open()
+int 
+shf_open (const char *file)
 {
 
 }
 
 // 8. filesize
-shf_filesize()
+int 
+shf_filesize (int fd)
 {
 
 }
 
 // 9. read
-shf_read()
+int 
+shf_read (int fd, void *buffer, unsigned size)
 {
 
 }
 
 // 10. write
-shf_write()
+int 
+shf_write (int fd, const void *buffer, unsigned size)
 {
 
 }
 
 // 11. seek
-shf_seek()
+void 
+shf_seek (int fd, unsigned position)
 {
 
 }
 
 // 12. tell
-shf_tell()
+unsigned 
+shf_tell (int fd)
 {
 
 }
 
 // 13. close
-shf_close()
+void 
+shf_close (int fd)
 {
 
 }
