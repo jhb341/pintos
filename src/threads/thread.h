@@ -7,6 +7,7 @@
 #include "synch.h"
 //#include "userprog/process.h"
 
+#define USERPROG
 
 
 /* States in a thread's life cycle. */
@@ -47,6 +48,8 @@ struct user_process_manager
    struct list_elem child_list_elem;   /* 내가 자식으로 있는 부모 프로세스의 자식 리스트에 연결할 대기표 */
    struct semaphore sema_wait;         /* ? */
    struct semaphore sema_load;         /* 내가 load하는 동안 내 부모가 안꺼지게 하는 세마포 */
+   struct file** file_directory_table; 
+   int file_directory_num; 
 };
             
 /* Values for Advance Scheduler */               
