@@ -7,6 +7,8 @@
 #include "synch.h"
 //#include "userprog/process.h"
 
+#define USERPROG
+
 
 
 /* States in a thread's life cycle. */
