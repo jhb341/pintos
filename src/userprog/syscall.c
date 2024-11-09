@@ -117,6 +117,10 @@ shf_open (const char *file)
     return -1; 
   }
 
+  if(current->process_manager->exc_file != NULL && strcmp(current->name, new_file) == 0){
+    file_deny_write(new_file); 
+  }
+
   current->process_manager->file_directory_table[*current_directory_num] = new_file; 
 
   (*current_directory_num) ++; 
