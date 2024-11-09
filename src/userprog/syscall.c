@@ -27,52 +27,22 @@ syscall_init (void)
 
 void 
 stack_arguments(int* esp, int* arg, int count){
-  for (int i = 0)
+  int first = esp + 1; 
+  for (int i = 0, i < count; i++){
+    if(verify_thread_memory(first + i)){
+      arg[i] = *(first + i)
+    }
+  }
+}
+
+void initialize_argv(int *argv, int size) {
+    for (int i = 0; i < size; i++) {
+        argv[i] = 0;  // 초기값으로 0을 설정
+    }
 }
 
 /********** syscall helper functions (13) **********/
 // 1. halt -- call shutdown_power_off() function (pintos document)
-
-
-// void
-// shutdown_power_off (void)
-// {
-//   const char s[] = "Shutdown";
-//   const char *p;
-
-// #ifdef FILESYS
-//   filesys_done ();
-// #endif
-
-//   print_stats ();
-
-//   printf ("Powering off...\n");
-//   serial_flush ();
-
-//   /* ACPI power-off */
-//   outw (0xB004, 0x2000);
-
-//   /* This is a special power-off sequence supported by Bochs and
-//      QEMU, but not by physical hardware. */
-//   for (p = s; *p != '\0'; p++)
-//     outb (0x8900, *p);
-
-//   /* For newer versions of qemu, you must run with -device
-//    * isa-debug-exit, which exits on any write to an IO port (by
-//    * default 0x501).  Qemu's exit code is double the value plus one,
-//    * so there is no way to exit cleanly.  We use 0x31 which should
-//    * result in a qemu exit code of 0x63.  */
-//   outb (0x501, 0x31);
-
-//   /* This will power off a VMware VM if "gui.exitOnCLIHLT = TRUE"
-//      is set in its configuration file.  (The "pintos" script does
-//      that automatically.)  */
-//   asm volatile ("cli; hlt" : : : "memory");
-
-//   /* None of those worked. */
-//   printf ("still running...\n");
-//   for (;;);
-// }
 
 void 
 shf_halt()
@@ -85,8 +55,9 @@ void
 shf_exit(int status)
 {
   struct thread *current = thread_current(); 
-  currnet -> process_manager -> exit_syscall_num = status; 
+  currnet -> process_manager.exit_syscall_num = status; 
   // semaphore 처리? 
+  printf ("%s: exit(%d)\n", current->name, status);
   thread_exit(); 
 }
 
@@ -113,7 +84,7 @@ bool
 shf_create (const char *file, unsigned initial_size)
 {
   //create file with "initial_size" size 
-  if(file == NULL)
+  if(file == NULL || !verify_thread_memory(file))
     shf_exit(-1); 
 
   return filesys_create (file, initial_size); 
@@ -123,7 +94,7 @@ shf_create (const char *file, unsigned initial_size)
 bool 
 shf_remove (const char *file)
 {
-  if(file == NULL)
+  if(file == NULL || !verify_thread_memory(file))
     shf_exit(-1); 
 
   return filesys_remove (file, initial_size); 
@@ -133,8 +104,11 @@ shf_remove (const char *file)
 int 
 shf_open (const char *file)
 {
+  if (file == NULL || !verify_thread_memory(file))
+    shf_exit(-1); 
+
   struct thread* current = thread_current(); 
-  int current_directory_num = current->process_manager->file_directory_num; 
+  int *current_directory_num = current->process_manager.file_directory_num; 
 
   struct file* new_file; 
   new_file = filesys_open(file); 
@@ -143,23 +117,15 @@ shf_open (const char *file)
     return -1; 
   }
 
-  current->process_manager->file_directory_table[current_directory_num] = new_file; 
+  current->process_manager->file_directory_table[*current_directory_num] = new_file; 
 
-  current->process_manager->file_directory_num ++; 
+  (*current_directory_num) ++; 
 
-  return current->process_manager->file_directory_num; 
+  return *current_directory_num;  
 }
 
 // 8. filesize
 
-/*
-off_t
-file_length (struct file *file) 
-{
-  ASSERT (file != NULL);
-  return inode_length (file->inode);
-}
-*/
 int 
 shf_filesize (int fd)
 {
@@ -178,9 +144,16 @@ shf_filesize (int fd)
 int 
 shf_read (int fd, void *buffer, unsigned size)
 {
+  if(!verify_thread_memory(fd) || !verify_thread_memory(buffer)){
+    sys_exit(-1); 
+  }
+
   struct thread* current = thread_current(); 
 
   struct file* current_file = current -> process_manager ->file_directory_table[fd]; 
+
+  if(current_file == NULL)
+    sys_exit(-1); 
 
   int result = 0; 
 
@@ -200,9 +173,13 @@ shf_write (int fd, const void *buffer, unsigned size)
   // written 할 수 없으면 0 return 
   // 원래는 write 한 만큼 늘어나야하는데 현재 filesys 는 늘어나는게 구현 X
 
+  if(!verify_thread_memory(fd) || !verify_thread_memory(buffer)){
+    shf_exit(-1); 
+  }
+
   struct thread* current = thread_current(); 
 
-  int current_directory_num = current -> process_manager ->file_directory_num; 
+  int current_directory_num = current -> process_manager.file_directory_num; 
   
   if(fd == 1){
     lock_acquire(&file_system_lock); 
@@ -222,7 +199,7 @@ shf_write (int fd, const void *buffer, unsigned size)
 
     return written_bytes; 
   }else{
-    // 여기서 따로 처리해줘야하는게 있나? error?  
+    shf_exit(-1); 
   }
   return -1;
 }
@@ -235,10 +212,8 @@ shf_seek (int fd, unsigned position)
   struct file* current_file = current -> process_manager ->file_directory_table[fd];
   if(current_file == NULL){
     return; 
-    // 다른 error 처리 필요한지? 
   }
   file_seek(current_file, position); 
-
 }
 
 // 12. tell
@@ -248,7 +223,7 @@ shf_tell (int fd)
   struct thread* current = thread_current(); 
   struct file* current_file = current -> process_manager ->file_directory_table[fd];
   if(current_file == NULL){
-    //error 처리 
+    return -1; 
   }
   return file_tell(current_file); 
 }
@@ -273,10 +248,11 @@ shf_close (int fd)
     current -> process_manager ->file_directory_table[i] = current -> process_manager ->file_directory_table[i + 1];  
   }
 
-  current -> process_manager ->file_directory_num --; 
+  current -> process_manager.file_directory_num --; 
 }
 
 /***************************************************/
+
 
 static void
 syscall_handler (struct intr_frame *f) 
@@ -284,6 +260,9 @@ syscall_handler (struct intr_frame *f)
   if(verify_thread_memory(f->esp) == false){
     shf_exit(-1);
   }
+
+  int argv[3];
+  initialize_argv(argv, 3);
 
 
   //thread_current()->esp
@@ -295,61 +274,63 @@ syscall_handler (struct intr_frame *f)
   
   case SYS_EXIT:
     // print exit message here ? 
-    // 여기서 부터 argv 가져오는 함수 필요 
-    //shf_exit(int status)  
+    stack_arguments(f->esp, &argv, 1);  
+    shf_exit(argv[0]); 
     break;
   
   case SYS_EXEC:
-    //shf_exec(const char* cmd_line) 
-    //pid_t return
+    stack_arguments(f->esp, &argv, 1);  
+    f->eax = shf_exec((const char*)argv[0]);  //pid_t return
     break;
   
   case SYS_WAIT:
-    //int return 
-    //shf_wait(pid_t pid)
+    stack_arguments(f->esp, &argv, 1);  
+    f->eax = shf_wait((pid_t)argv[0]); // int return 
     break;
   
   case SYS_CREATE:
-    // bool return 
-    // shf_create (const char *file, unsigned initial_size)
+    stack_arguments(f->esp, &argv, 2);  
+    f -> eax = shf_create ((const char*)argv[0], (unsigned)argv[1]); //bool 
     break;
   
   case SYS_REMOVE:
-    //bool return 
-    //shf_remove (const char *file)
+    stack_arguments(f->esp, &argv, 1);  
+    f->eax = shf_remove ((const char*)argv[0]); //bool 
     break;
   
   case SYS_OPEN:
-    //int return 
-    //shf_open (const char *file)
+    stack_arguments(f->esp, &argv, 1);  
+    f->eax = shf_open ((const char*)argv[0]); //int 
     break;
   
   case SYS_FILESIZE:
-    //int return 
-    //shf_filesize (int fd)
+    stack_arguments(f->esp, &argv, 1);  
+    f->eax = shf_filesize (argv[0]); // int 
     break;
   
   case SYS_READ:
-    //int return 
-    //shf_read (int fd, void *buffer, unsigned size)
+    stack_arguments(f->esp, &argv, 3);  
+    f->eax = shf_read (argv[0], (void*)argv[1], (unsigned)argv[2]);  //int 
     break;
   
   case SYS_WRITE:
-    //int return 
-    //shf_write (int fd, const void *buffer, unsigned size)
+    stack_arguments(f->esp, &argv, 3);  
+    f->eax = shf_write (argv[0], (const void*) argv[1], (unsigned) argv[2]); //int 
     break;
   
   case SYS_SEEK:
-    //shf_seek (int fd, unsigned position)
+    stack_arguments(f->esp, &argv, 2);  
+    shf_seek (argv[0], (unsigned)argv[1]); 
     break;
   
   case SYS_TELL:
-    //unsigned return 
-    // shf_tell (int fd)
+    stack_arguments(f->esp, &argv, 1);  
+    f->eax = shf_tell (argv[0]); // unsigned 
     break;
   
   case SYS_CLOSE:
-    // shf_close (int fd)
+    stack_arguments(f->esp, &argv, 1);  
+    shf_close (argv[0]); 
     break;
   
   default:
