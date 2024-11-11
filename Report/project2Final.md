@@ -4,18 +4,23 @@
 
 ## Table of Contents
 **Overall project design**
+
 **1. Argument Passing**
+
 	- Implementation and Improvement from the previous design
  	- Difference from design report
 **2. System Calls**
+
 	- Implementation and Improvement from the previous design
  	- Difference from design report
 **3. Process Termination Messages**
+
 	- Implementation and Improvement from the previous design
  	- Difference from design report
-** Overall Limitations **
-** Overall discuss **
-** Result **
+  
+**Overall Limitations**
+**Overall discuss**
+**Result**
 
 ## Overall Project Design 
 
