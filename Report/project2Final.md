@@ -2,6 +2,21 @@
 김지현(20220302) 
 전현빈(20220259)
 
+## Table of Contents
+**Overall project design**
+**1. Argument Passing**
+	- Implementation and Improvement from the previous design
+ 	- Difference from design report
+**2. System Calls**
+	- Implementation and Improvement from the previous design
+ 	- Difference from design report
+**3. Process Termination Messages**
+	- Implementation and Improvement from the previous design
+ 	- Difference from design report
+** Overall Limitations **
+** Overall discuss **
+** Result **
+
 ## Overall Project Design 
 
 이번 프로젝트 2에서는 아래의 네 가지 task가 있다. 각각의 task를 실행하기 위해 구현한 함수들을 설명하기 전에, 전체적인 User Program의 작동 방식에 대해 설명하겠다. 부모와 자식 프로세스 간의 관계를 저장하고 각 프로세스가 사용하는 리소스(추후 설명될 파일 포함)를 관리하기 위해 thread 구조체에 변수들을 추가하였다.
@@ -762,6 +777,7 @@ file 닫는거 헷갈렸다는 점 추가
 
 # Result 
 ~pintos/src/userprog에서 make check한다. 아래와 같이 80pass가 나옴을 확인했다.
+
 <img width="388" alt="image" src="https://github.com/user-attachments/assets/3dc5da02-e540-494e-87a0-ca28f4b03fb4">
 <img width="491" alt="image" src="https://github.com/user-attachments/assets/42d77faf-6382-4262-8b1b-12d6b902d662">
 
