@@ -761,5 +761,9 @@ file 닫는거 헷갈렸다는 점 추가
 
 
 # Result 
+~pintos/src/userprog에서 make check한다. 아래와 같이 80pass가 나옴을 확인했다.
+<img width="388" alt="image" src="https://github.com/user-attachments/assets/3dc5da02-e540-494e-87a0-ca28f4b03fb4">
+<img width="491" alt="image" src="https://github.com/user-attachments/assets/42d77faf-6382-4262-8b1b-12d6b902d662">
 
-(결과 사진) (추가) 
+
+
