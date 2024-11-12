@@ -123,7 +123,8 @@ int make_argv(char **argv, char *file_name){
 }
 ```
 
-위 함수에 대한 설명 (추가)
+ 함수 `make_argv`는 이름 그대로 argv를 build한다. 즉, 입력된 file_name을 공백 " "을 기준으로 하여 파싱하고 각 토큰(분리된 단어)들을 argv에 순서대로 저장한 후 해당 토큰의 갯수 argc를 return한다. 이는 일반적으로 커맨드 라인을 토큰화 하여 각 인자를 배열에 저장하고 인자의 갯수를 계산하는 역할을 한다. 이는 argument pasing 전체를 구현함에 있어 가장 기초가 되는 단계를 구현한다.
+ 처음 file_name은 `strtok_r`에 의해 파싱되며 이때 첫번째 토큰이 `cmd_1st`에 저장된다. 그리고 해당 토큰을 제외한 나머지 덩어리는 `cmd_remainder`에 저장된다. 즉 예를 들어 "grep foo bar"의 경우 "grep"은 cmd_1st에, "foo bar"는 cmd_remainder에 저장된다. 이후 반복문을 사용하여 cmd_1st는 남은 cmd_remainder의 첫번째 토큰을 계속해서 가르키게 되는데, 이때 `iterS`는 전체 커맨드(file_name)의 가장 첫번째 토큰(반복문 시작 토큰)이며 `iterE`는 NULL(for 루프 종료 조건 설정)이다. 이처럼 for루프에서는 file_name을 순차적으로 공백 기준 토큰화하여 cmd_1st에 저장하고 argv배열에 순차적으로 삽입한다. (argv[argc]에 저장 후 argc증가)
 
 이때, Pintos 문서에 설명된 'lib/string.h' 파일의 `strtok_r` 함수를 사용하여 구현하였다. 각 인자는 `char** argv`에 저장되며, `int argc`는 인자의 총 개수를 나타낸다.
 
