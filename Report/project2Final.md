@@ -153,9 +153,8 @@ start_process (void *file_name_)
 ```
 
 `start_process` 함수는 user program을 새로운 process로 로드하고 실행하는 역할을 한다.  
-`start_process` 자체에서 수정한 내용 (추가)
-
-이때 프로그램을 실행할 때 필요한 인자를 user stack에 추가해야 하며, 이 역할을 수행하는 함수를 새롭게 추가하였다.
+`start_process` 에서는 argc, argv를 선언 후, 입력받은 file_name_에 저장된 커맨드를 앞서 구현한 `make_argv`를 이용해 파싱하고 저장한다. 기존구현에서는 `load`함수에 file_name을 전달하였으나 이제는 argv[0]을 전달함으로써 커맨드의 명령어만을 올바르게 의도한대로 전달할 수 있다. `load`함수는 boolean으로, 메모리에 성공적으로 로드했는지에 대한 여부를 반환하여 success에 저장한다. 따라서 현재 thread의 isLoad는 success와 같게해준다.  `load`의 구현은 나중에 설명한다.
+ 또한 `success == true`인 경우, 프로그램을 실행해야하므로 필요한 인자를 user stack에 push해야하고 이를 수행하는 함수를 아래와 같이 구현했다.
 
 ```
 void cmd_stack_build(char **argv, int argc, void **esp){
@@ -200,10 +199,14 @@ void cmd_stack_build(char **argv, int argc, void **esp){
 }
 ```
 
-위 함수를 보면, user stack에 순서대로 값을 넣는 것을 확인할 수 있다.
+위의 함수는 메모리에 stack을 적절히 구성하는 기능을 수행한다. pintos document에서는 아래와 같이 stack을 구성할것을 명시하고있다.
+<img width="447" alt="image" src="https://github.com/user-attachments/assets/3439089d-331e-4bc7-ac56-d14f8fa75c08">
 
-user stack 내부 순서 사진 (나중에 추가)  
-순서와 user stack이 아래로 자라나게 만드는 이유 (나중에 추가)
+따라서 index = argc - 1부터 index = 0 까지 for 루프를 이용하여 argv[i][ *data* ]를 push하고, 메모리 접근 효율을 위해 align을 맞추기 위해 0을 조건에 맞게 push한다. 이후 NULL을 푸시하며 다음에는 argv[i]를 푸시한 후 argv, argc, return point를 푸쉬함으로써 stack build를 종료한다. 
+
+상기한 함수들의 구현과 사용을 통해, 입력된 커맨드를 파싱하여 저장하고 적절히 스택을 구성하며 메모리에 로드하여 유저프로그램을 실행시키는 과정을 준비할 수 있다.
+
+유저 프로세스를 종료한다는 것은, 파일을 close하는 과정을 포함해야한다. 따라서 프로세스의 종료를 구현하는 `process_exit`에 아래와 같이 현재 execute중인 file에 대해 `file_close`함수를 이용해 close해주어야 한다. 따라서 execute되고 있던 unwritable file은 (i.e., `cur->fileExec`) 쓰기가능해진다. 
 
 ```
 void
@@ -240,7 +243,8 @@ process_exit (void)
 }
 ```
 
-위의 함수에서 수정된 사항 설명 (추가) 
+
+프로세스를 실행시키기 위해 위의 과정에서 파싱하고 저장한 커맨드를 바탕으로 올바르게 file에 접근하여 memory에 load해야하는데, 이 과정은 load함수에 의해 구현된다. `load`는 memory로드를 시도하고 성공여부를 boolean으로 return 한다.
 
 ```
 
@@ -292,64 +296,8 @@ load (const char *file_name, void (**eip) (void), void **esp)
       goto done; 
     }
 
-  /* Read program headers. */
-  file_ofs = ehdr.e_phoff;
-  for (i = 0; i < ehdr.e_phnum; i++) 
-    {
-      struct Elf32_Phdr phdr;
+  /* ... 기존 구현에 해당하는 부분으로, 중략 ... */
 
-      if (file_ofs < 0 || file_ofs > file_length (file))
-        goto done;
-      file_seek (file, file_ofs);
-
-      if (file_read (file, &phdr, sizeof phdr) != sizeof phdr)
-        goto done;
-      file_ofs += sizeof phdr;
-      switch (phdr.p_type) 
-        {
-        case PT_NULL:
-        case PT_NOTE:
-        case PT_PHDR:
-        case PT_STACK:
-        default:
-          /* Ignore this segment. */
-          break;
-        case PT_DYNAMIC:
-        case PT_INTERP:
-        case PT_SHLIB:
-          goto done;
-        case PT_LOAD:
-          if (validate_segment (&phdr, file)) 
-            {
-              bool writable = (phdr.p_flags & PF_W) != 0;
-              uint32_t file_page = phdr.p_offset & ~PGMASK;
-              uint32_t mem_page = phdr.p_vaddr & ~PGMASK;
-              uint32_t page_offset = phdr.p_vaddr & PGMASK;
-              uint32_t read_bytes, zero_bytes;
-              if (phdr.p_filesz > 0)
-                {
-                  /* Normal segment.
-                     Read initial part from disk and zero the rest. */
-                  read_bytes = page_offset + phdr.p_filesz;
-                  zero_bytes = (ROUND_UP (page_offset + phdr.p_memsz, PGSIZE)
-                                - read_bytes);
-                }
-              else 
-                {
-                  /* Entirely zero.
-                     Don't read anything from disk. */
-                  read_bytes = 0;
-                  zero_bytes = ROUND_UP (page_offset + phdr.p_memsz, PGSIZE);
-                }
-              if (!load_segment (file, file_page, (void *) mem_page,
-                                 read_bytes, zero_bytes, writable))
-                goto done;
-            }
-          else
-            goto done;
-          break;
-        }
-    }
 
   /* Set up stack. */
   if (!setup_stack (esp))
@@ -368,9 +316,11 @@ load (const char *file_name, void (**eip) (void), void **esp)
 }
 ```
 
-위의 함수 설명 추가 (추가) 
+즉, load함수는 공유자원인 file에 접근한다. 따라서 단일한 file에의 접근을 atomic하게 구현해야하므로 파일 접근을 `FileLock`이라는 lock을 이용해 보호했다. FileLock acquire후 file load를 시도하여 실패하면 release 하고 실패 메세지를 출력하며, file획득에 성공한 경우, 해당 file 은 execute되는 파일이므로 `t->fileExec = file;`를 통해 현재 실행되는 파일임을 명시한다. 이후 해당 file이 실행되는 도중 수정되어선 안되므로 `file_deny_write(file);`를 통해 파일이 다른 writer에 의해 수정되지 못하도록 보호한다. 이 과정 이후에는 파일에 대한 접근과 처리를 완료하였으므로 FileLock은 release해주어도 된다.
 
-이렇게 구현을 완료하면 첫 번째 과제인 argument passing에서 요구하는 목적을 달성할 수 있다.
+또한 file_close는 프로세스 종료시 수행되는 `process_exit`에서 처리하므로 load에서 호출될 필요가 없으므로 기존구현에서 주석처리로 제거하였다.
+
+이상으로 구현을 완료하면 첫 번째 과제인 argument passing에서 요구하는 목적을 달성할 수 있다.
 
 ### Difference from design report
 
