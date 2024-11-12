@@ -756,16 +756,8 @@ syscall_handler(struct intr_frame *f)
 
 
 ### Difference from design report 
-```
-design report:
-현재 syscall_handler는 바로 종료하는 방식으로 구현되어 있으므로, 이 부분을 우선적으로 수정해야 한다. 우선 intr_frame의 esp 값을 읽어와, 스택에 사용자 프로그램이 push한 인자들과 시스템 호출 번호를 4바이트 단위로 읽어들여 이를 스택 또는 큐에 복사해 저장한다. 이후 시스템 호출에 필요한 정보를 syscall_handler에 저장하여 처리할 수 있도록 한다.
 
-그 후 syscall_handler에 각 시스템 호출 번호에 해당하는 헬퍼 함수를 정의하고 구현하여, 각 번호에 맞는 시스템 호출이 적절한 헬퍼 함수에서 처리되도록 구현한다. 예를 들어, sys_exit_helper와 같은 헬퍼 함수를 통해 시스템 호출 번호와 인자를 전달하고, 반환된 값을 intr_frame의 eax에 저장할 수 있도록 한다. 이때 적절한 헬퍼함수의 구현은 아래 4번 file system관련해서 구현해야하는 함수와 중복된다. 예를들어 file creation과 관련된 syscall을 수행하는 함수의 경우 파일 시스템 함수를 그대로 사용하면 될것이다.
-
-또한, 시스템 호출 및 실행 파일 쓰기 제한을 위한 pcb(프로세스 제어 블록) 구조체를 새롭게 정의하고자 한다. pcb에는 프로세스의 고유 ID, 부모 프로세스, 파일 시스템 접근을 위한 플래그 변수, 대기 처리를 위한 변수, 현재 실행 중인 파일이 포함되어야 한다. 그리고 thread 구조체에 이 pcb 포인터를 추가한 뒤, 프로세스가 생성되고 시작될 때(start_process 시점)에 해당 스레드의 pcb를 초기화할 예정이다. 여기서 추가된 현재 실행 중인 파일을 가리키는 포인터는 아래의 4번 과제에서 더 자세히 설명할 예정이다.
-```
-
-기존의 design report 내용과 유사함. (디테일만 추가 됨) 
+전체적인 로직은 기존 design report의 내용과 유사하나, 몇 가지 추가된 사항이 있다. 먼저, 기존의 design report에서는 인자를 저장하는 과정을 고려하지 않고 각 시스템 호출(syscall) 내부 함수만 구상하였으나, 새롭게 `syscall_handler`의 `switch-case`에서 사용자 스택에서 `pop`하여 인자를 전달하는 함수가 필요하여 구현하였다. 그리고 몇몇 시스템 호출 함수에서 사용자 영역에 접근하는지 확인하기 위해 `verify_mem_address` 함수를 추가 구현하여 잘못된 메모리 접근을 방지하였다.
 
 
 ## 3. Process Termination Messages 
@@ -778,7 +770,7 @@ design report:
 void sys_exit(int status)
 {
   thread_current()->exitCode = status;
-  printf("%s: exit(%d)\n", thread_name(), status); // 이부분 
+  printf("%s: exit(%d)\n", thread_name(), status); // 3. Process Termination Messages 
   thread_exit();
 }
 ```
@@ -793,8 +785,6 @@ void sys_exit(int status)
 ### Implementation & Improvement from the previous design 
 
 마지막 과제는 열려 있는 파일에 쓰기 작업을 하지 않도록 하는 것이다. Pintos 문서에 나타난 대로 파일을 열 때 `file_deny_write` 함수를 함께 호출하여 쓰기를 제한하고, 파일을 닫을 때 `file_allow_write` 함수를 이용해 쓰기를 허용하는 과정을 추가하면 된다.
-
-``` file_deny_write 이랑 file_allow_write 함수 설명 추가해야 하는지? 디자인 레포트에서 설명하긴 했는데..  (나중에 추가) ```
 
 ```
 bool
@@ -843,12 +833,16 @@ file_close (struct file *file)
 기존에는 `load` 함수에서 `file_deny_write` 함수를 호출하여 쓰기를 제한하고, 파일을 닫을 때가 아닌 `process_exit` 함수가 호출될 때 `file_allow_write` 함수를 호출하여 다시 쓰기를 허용하는 방식으로 설계하였다. 그러나 syscall을 구현하면서 `sys_open` 함수에서도 파일을 열어 쓰기를 제한하는 과정이 필요하며, 반대로 `process_exit` 대신 `file_close` 함수에서 이미 `file_allow_write` 함수를 사용하므로 별도로 쓰기 허용 작업을 추가하지 않아도 된다는 점을 알게 되어 이와 같이 수정하였다. 
 
 ### Overall Limitations 
--> write 함수에서 파일 늘어나는거 구현안된거
 
-file 닫는거 헷갈렸다는 점 추가 
+이번 과제는 기존 프로젝트에서 새롭게 정의해야 할 구조들이 많아서 특히 어렵게 느껴졌다. 각 스레드별로 PCB와 파일을 관리할 수 있도록 변수를 정의해야 했는데, 구현 과정에서 계속 변수가 추가되면서 수정을 자주 해야 하는 어려움이 있었다. 원래는 PCB와 파일을 별도의 구조체로 관리하려 했으나, syscall 부분에서 하위 클래스에 반복적으로 접근하다 보니 복잡해져, 최종적으로 스레드 구조체에 PCB와 파일 관리를 위한 변수를 모두 정의하는 것으로 수정하였다.
+
+또한, 사용자 영역의 메모리에 접근하는 것이 올바른지 확인하고, race condition을 방지하기 위해 세마포어를 사용했는데, 어떤 함수에서 필수적인지 파악하는 데 시간이 많이 걸렸다.
+
+마지막으로, 과제 4번에서 언급한 `file_close` 함수도 초기에는 design report의 잘못된 접근 방식을 시도하여 오류가 발생했으나, `file_close` 함수를 제대로 확인하여 과제를 마무리할 수 있었다.
 
 ### Overall Discussion 
 
+-> what have you learned? (나중에 추가) 
 
 # Result 
 ~pintos/src/userprog에서 make check한다. 아래와 같이 80pass가 나옴을 확인했다.
