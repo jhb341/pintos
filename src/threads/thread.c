@@ -147,6 +147,21 @@ thread_print_stats (void)
           idle_ticks, kernel_ticks, user_ticks);
 }
 
+void
+thread_userprog_init(struct thread *t)
+{
+    t->parentThread = thread_current();
+
+    list_push_back(&(thread_current()->childList), &(t->childElem));
+
+    t->isExit = false;
+    t->isLoad = false;
+
+    sema_init(&(t->semaWait), 0);
+    sema_init(&(t->semaExec), 0);
+}
+
+
 /* Creates a new kernel thread named NAME with the given initial
    PRIORITY, which executes FUNCTION passing AUX as the argument,
    and adds it to the ready queue.  Returns the thread identifier
@@ -197,6 +212,16 @@ thread_create (const char *name, int priority,
   sf = alloc_frame (t, sizeof *sf);
   sf->eip = switch_entry;
   sf->ebp = 0;
+
+  //#ifdef USERPROG
+  thread_userprog_init(t);
+  t->fileTable = palloc_get_page(PAL_ZERO);
+  if(t->fileTable == NULL)
+  {
+    return TID_ERROR;
+  }
+  t->fileCnt = 2;
+  //#endif
 
   /* Add to run queue. */
   thread_unblock (t);
@@ -291,6 +316,10 @@ thread_exit (void)
      when it calls thread_schedule_tail(). */
   intr_disable ();
   list_remove (&thread_current()->allelem);
+  thread_current()->isExit = true;
+  if(thread_current() != initial_thread){
+	  sema_up(&(thread_current()->semaWait));
+  }
   thread_current ()->status = THREAD_DYING;
   schedule ();
   NOT_REACHED ();
@@ -466,6 +495,11 @@ init_thread (struct thread *t, const char *name, int priority)
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
+
+  #ifdef USERPROG
+    list_init(&(t->childList));
+  #endif     
+
   intr_set_level (old_level);
 }
 
@@ -538,7 +572,7 @@ thread_schedule_tail (struct thread *prev)
   if (prev != NULL && prev->status == THREAD_DYING && prev != initial_thread) 
     {
       ASSERT (prev != cur);
-      palloc_free_page (prev);
+      // palloc_free_page (prev);
     }
 }
 

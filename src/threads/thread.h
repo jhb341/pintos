@@ -4,6 +4,11 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include <hash.h>
+#include "threads/synch.h"
+
+#define USERPROG
+
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -96,6 +101,21 @@ struct thread
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+
+    struct thread *parentThread;
+    struct list_elem childElem;
+    struct list childList;
+
+    bool isLoad;
+    bool isExit;
+
+    struct semaphore semaWait;
+    struct semaphore semaExec;
+    int exitCode;
+
+    struct file **fileTable;
+    struct file *fileExec;
+    int fileCnt;
 #endif
 
     /* Owned by thread.c. */
@@ -114,6 +134,8 @@ void thread_tick (void);
 void thread_print_stats (void);
 
 typedef void thread_func (void *aux);
+
+void thread_userprog_init(struct thread *t);
 tid_t thread_create (const char *name, int priority, thread_func *, void *);
 
 void thread_block (void);

@@ -8,6 +8,7 @@
 #include "userprog/gdt.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
+#include "userprog/syscall.h"
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
@@ -15,11 +16,90 @@
 #include "threads/init.h"
 #include "threads/interrupt.h"
 #include "threads/palloc.h"
+#include "threads/malloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
+extern struct lock FileLock;
+
+struct thread *getChild(pid_t pid)
+{
+  struct list_elem *e;
+  struct list *childList = &thread_current()->childList;
+  struct list_elem *iterS = list_begin(childList);
+  struct list_elem *iterE = list_end(childList);
+  struct thread *retrunThread = NULL;
+
+  for (e = iterS; e != iterE; e = list_next (e))
+  {
+    struct thread *t = list_entry(e, struct thread, childElem);
+    if(t->tid == pid){
+      retrunThread = t;
+    }
+  }
+  return retrunThread;
+}
+
+int make_argv(char **argv, char *file_name){
+  char *cmd_1st;        /* file name */
+  char *cmd_remainder;  /* remainder */
+  char *iterS = strtok_r (file_name, " ", &cmd_remainder);
+  char *iterE = NULL;
+  int argc = 0;
+
+  for (cmd_1st = iterS; cmd_1st != iterE; cmd_1st = strtok_r (NULL, " ", &cmd_remainder)){
+    argv[argc] = cmd_1st;
+    argc++;
+  }
+  return argc;
+}
+
+
+void cmd_stack_build(char **argv, int argc, void **esp){
+  /* argv[i][data] push */
+  int len = 0;
+  for (int i = argc - 1; i >= 0; i--) {
+    // 큰 index부터 차례로 push해야 한다. 
+    len = strlen(argv[i]); // len은 명령어의 단어 길이
+    *esp -= len + 1;
+    strlcpy(*esp, argv[i], len + 1);
+    argv[i] = *esp;
+  }
+
+  /* Align Stack */
+  // 만약 *esp가 4의 배수가 아니면
+  if ((uint32_t)(*esp) % 4 != 0) {
+    // *esp를 가장 가까운 4의 배수로 내림
+    *esp = *esp - ((uint32_t)(*esp) % 4);
+  }
+
+  /* NULL push */
+  *esp -= 4;
+  **(uint32_t **)esp = 0;
+  
+  /* argv[i] push */
+  for (int i = argc - 1; i >= 0; i--) {
+    *esp -= 4;
+    **(uint32_t **)esp = argv[i];
+  }
+  
+  /* argv push */
+  *esp -= 4;
+  **(uint32_t **)esp = *esp + 4;
+
+  /* argc push */
+  *esp -= 4;
+  **(uint32_t **)esp = argc;
+
+  /* return point push */
+  *esp -= 4;
+  **(uint32_t **)esp = 0;
+}
+
+
+
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -27,10 +107,14 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
    thread id, or TID_ERROR if the thread cannot be created. */
 tid_t
 process_execute (const char *file_name) 
-{
+{ 
   char *fn_copy;
+  char *fn_copy2;
+  char *cmd_1st_token;
+  char *cmd_remainder; // remainder of file_name
   tid_t tid;
 
+  
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page (0);
@@ -38,10 +122,31 @@ process_execute (const char *file_name)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
 
+  fn_copy2 = palloc_get_page(0);
+  strlcpy(fn_copy2, file_name, PGSIZE);
+  cmd_1st_token = strtok_r(fn_copy2," ", &cmd_remainder);
+  
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
-  if (tid == TID_ERROR)
+  tid = thread_create (cmd_1st_token, PRI_DEFAULT, start_process, fn_copy);
+  
+  palloc_free_page(fn_copy2);
+  
+  if (tid == TID_ERROR){
     palloc_free_page (fn_copy); 
+  }
+
+  struct list *currentList = &(thread_current()->childList);
+  struct list_elem *iterStart = list_begin(currentList);
+  struct list_elem *iterEnd = list_end(currentList);
+  struct list_elem *e;
+  struct thread *c;
+  //for(e = list_begin(&thread_current()->childList);e!= list_end(&thread_current()->childList);e=list_next(e))
+  for(e = iterStart; e!= iterEnd; e=list_next(e))
+  {
+    c = list_entry(e, struct thread, childElem);
+    if(c->exitCode == -1)
+      return process_wait(tid); 
+  }
   return tid;
 }
 
@@ -54,13 +159,34 @@ start_process (void *file_name_)
   struct intr_frame if_;
   bool success;
 
+  char* fn_copy = palloc_get_page(0);
+  strlcpy(fn_copy,file_name,PGSIZE); // fn_copy는 위처럼 입력된 이름의 복사본이 저장됨
+
+
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (file_name, &if_.eip, &if_.esp);
 
+  int argc;
+  char** argv;
+  argv = palloc_get_page(0);
+  argc = make_argv(argv, fn_copy); // 
+
+  success = load (argv[0], &if_.eip, &if_.esp);
+
+  thread_current()->isLoad = success;
+  if(success){ //new
+    cmd_stack_build(argv, argc, &if_.esp);
+  }
+
+  sema_up(&thread_current()->semaExec);
+  palloc_free_page (fn_copy);
+  palloc_free_page (argv); 
+
+
+  /* 이후는 로드 실패시, 동일하게 간다. */
   /* If load failed, quit. */
   palloc_free_page (file_name);
   if (!success) 
@@ -85,11 +211,26 @@ start_process (void *file_name_)
 
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
+
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (tid_t child_tid) 
 {
-  return -1;
+  struct thread *parentThread = thread_current();
+  struct thread *childThread = getChild(child_tid);
+  if (childThread==NULL)
+  {
+    return -1;
+  }
+  int returnCode;
+
+  sema_down(&childThread->semaWait);  // make ATOMIC
+  returnCode = childThread->exitCode;
+  list_remove(&(childThread->childElem));
+	palloc_free_page(childThread); // make ATOMIC
+
+  return returnCode;
 }
+
 
 /* Free the current process's resources. */
 void
@@ -97,6 +238,15 @@ process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
+
+  for(int i = 2; i < cur->fileCnt; i++)
+  {
+    sys_close(i);
+  }
+	
+  // 이제 전부 해제
+  palloc_free_page(cur->fileTable); // 스레드가 가지고 있던 테이블 해제
+  file_close(cur->fileExec); // 파일을 닫는다. 
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -221,13 +371,24 @@ load (const char *file_name, void (**eip) (void), void **esp)
     goto done;
   process_activate ();
 
+  //////////////////////////////////////////////////////////////
+  // 여기 아래는 file 접근이므로 FileLock!
+  lock_acquire(&FileLock); // 파일락 획득 후 내려감
   /* Open executable file. */
   file = filesys_open (file_name);
   if (file == NULL) 
     {
+      lock_release(&FileLock); // 파일 못열었으니까 파일락 반환, 실패 메시지 출력
       printf ("load: %s: open failed\n", file_name);
       goto done; 
     }
+  
+  // 파일 획득 성공시
+  t->fileExec = file; // 스레드에서 실행하는 fileExec는 file임. 
+  file_deny_write(file); // 실행중인 파일은 Write되면 안됨!!!
+  // 파일 접근도 제한했으므로, 이제 파일락 반환해도 된다.
+  lock_release(&FileLock);
+  ////////////////////////////////////////////////////////////////
 
   /* Read and verify executable header. */
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
@@ -312,7 +473,8 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
  done:
   /* We arrive here whether the load is successful or not. */
-  file_close (file);
+  // file_close (file); 
+  /* 없어짐!!! */
   return success;
 }
 
@@ -443,6 +605,7 @@ setup_stack (void **esp)
     }
   return success;
 }
+
 
 /* Adds a mapping from user virtual address UPAGE to kernel
    virtual address KPAGE to the page table.
