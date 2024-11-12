@@ -1,6 +1,6 @@
 # CSED 312 Project 2 Final Report 
 김지현(20220302) 
-전현빈(20220259)
+\전현빈(20220259)
 
 ## Table of Contents
 **Overall project design**
@@ -154,7 +154,8 @@ start_process (void *file_name_)
 
 `start_process` 함수는 user program을 새로운 process로 로드하고 실행하는 역할을 한다.  
 `start_process` 에서는 argc, argv를 선언 후, 입력받은 file_name_에 저장된 커맨드를 앞서 구현한 `make_argv`를 이용해 파싱하고 저장한다. 기존구현에서는 `load`함수에 file_name을 전달하였으나 이제는 argv[0]을 전달함으로써 커맨드의 명령어만을 올바르게 의도한대로 전달할 수 있다. `load`함수는 boolean으로, 메모리에 성공적으로 로드했는지에 대한 여부를 반환하여 success에 저장한다. 따라서 현재 thread의 isLoad는 success와 같게해준다.  `load`의 구현은 나중에 설명한다.
- 또한 `success == true`인 경우, 프로그램을 실행해야하므로 필요한 인자를 user stack에 push해야하고 이를 수행하는 함수를 아래와 같이 구현했다.
+
+또한 `success == true`인 경우, 프로그램을 실행해야하므로 필요한 인자를 user stack에 push해야하고 이를 수행하는 함수를 아래와 같이 구현했다.
 
 ```
 void cmd_stack_build(char **argv, int argc, void **esp){
@@ -206,8 +207,6 @@ void cmd_stack_build(char **argv, int argc, void **esp){
 
 상기한 함수들의 구현과 사용을 통해, 입력된 커맨드를 파싱하여 저장하고 적절히 스택을 구성하며 메모리에 로드하여 유저프로그램을 실행시키는 과정을 준비할 수 있다.
 
-유저 프로세스를 종료한다는 것은, 파일을 close하는 과정을 포함해야한다. 따라서 프로세스의 종료를 구현하는 `process_exit`에 아래와 같이 현재 execute중인 file에 대해 `file_close`함수를 이용해 close해주어야 한다. 따라서 execute되고 있던 unwritable file은 (i.e., `cur->fileExec`) 쓰기가능해진다. 
-
 ```
 void
 process_exit (void)
@@ -222,29 +221,12 @@ process_exit (void)
 	
   // 이제 전부 해제
   palloc_free_page(cur->fileTable); // 스레드가 가지고 있던 테이블 해제
-  file_close(cur->fileExec); // 파일을 닫는다. 
-
-  /* Destroy the current process's page directory and switch back
-     to the kernel-only page directory. */
-  pd = cur->pagedir;
-  if (pd != NULL) 
-    {
-      /* Correct ordering here is crucial.  We must set
-         cur->pagedir to NULL before switching page directories,
-         so that a timer interrupt can't switch back to the
-         process page directory.  We must activate the base page
-         directory before destroying the process's page
-         directory, or our active page directory will be one
-         that's been freed (and cleared). */
-      cur->pagedir = NULL;
-      pagedir_activate (NULL);
-      pagedir_destroy (pd);
-    }
+  file_close(cur->fileExec); // 파일을 닫는다.
+...
 }
 ```
 
-
-프로세스를 실행시키기 위해 위의 과정에서 파싱하고 저장한 커맨드를 바탕으로 올바르게 file에 접근하여 memory에 load해야하는데, 이 과정은 load함수에 의해 구현된다. `load`는 memory로드를 시도하고 성공여부를 boolean으로 return 한다.
+유저 프로세스를 종료한다는 것은, 파일을 close하는 과정을 포함해야한다. 따라서 프로세스의 종료를 구현하는 `process_exit`에 위위와 같이 현재 execute중인 file에 대해 `file_close`함수를 이용해 close해주어야 한다. 따라서 execute되고 있던 unwritable file은 (i.e., `cur->fileExec`) 쓰기가능해진다. 
 
 ```
 
@@ -278,8 +260,6 @@ load (const char *file_name, void (**eip) (void), void **esp)
   
   // 파일 획득 성공시
   t->fileExec = file; // 스레드에서 실행하는 fileExec는 file임. 
-  file_deny_write(file); // 실행중인 파일은 Write되면 안됨!!!
-  // 파일 접근도 제한했으므로, 이제 파일락 반환해도 된다.
   lock_release(&FileLock);
   ////////////////////////////////////////////////////////////////
 
@@ -316,15 +296,33 @@ load (const char *file_name, void (**eip) (void), void **esp)
 }
 ```
 
-즉, load함수는 공유자원인 file에 접근한다. 따라서 단일한 file에의 접근을 atomic하게 구현해야하므로 파일 접근을 `FileLock`이라는 lock을 이용해 보호했다. FileLock acquire후 file load를 시도하여 실패하면 release 하고 실패 메세지를 출력하며, file획득에 성공한 경우, 해당 file 은 execute되는 파일이므로 `t->fileExec = file;`를 통해 현재 실행되는 파일임을 명시한다. 이후 해당 file이 실행되는 도중 수정되어선 안되므로 `file_deny_write(file);`를 통해 파일이 다른 writer에 의해 수정되지 못하도록 보호한다. 이 과정 이후에는 파일에 대한 접근과 처리를 완료하였으므로 FileLock은 release해주어도 된다.
+프로세스를 실행시키기 위해 위의 과정에서 파싱하고 저장한 커맨드를 바탕으로 올바르게 file에 접근하여 memory에 load해야하는데, 이 과정은 load함수에 의해 구현된다. `load`는 memory로드를 시도하고 성공여부를 boolean으로 return 한다.
+
+즉, load함수는 공유자원인 file에 접근한다. 따라서 단일한 file에의 접근을 atomic하게 구현해야하므로 파일 접근을 `FileLock`이라는 lock을 이용해 보호했다. FileLock acquire후 file load를 시도하여 실패하면 release 하고 실패 메세지를 출력하며, file획득에 성공한 경우, 해당 file 은 execute되는 파일이므로 `t->fileExec = file;`를 통해 현재 실행되는 파일임을 명시한다. 이후 해당 file이 실행되는 도중 수정되어선 안되므로 `file_deny_write(file)`를 통해 파일이 다른 writer에 의해 수정되지 못하도록 보호해야 하는데 이 과정은 아래에서 다시 설명할 예정이다. 이 과정 이후에는 파일에 대한 접근과 처리를 완료하였으므로 FileLock은 release해주어도 된다.
 
 또한 file_close는 프로세스 종료시 수행되는 `process_exit`에서 처리하므로 load에서 호출될 필요가 없으므로 기존구현에서 주석처리로 제거하였다.
 
-이상으로 구현을 완료하면 첫 번째 과제인 argument passing에서 요구하는 목적을 달성할 수 있다.
+마지막으로 사용자 프로그램이 올바른 메모리 접근을 하는지 확인하기 위해 exception.c 의 page_fault 함수를 수정해주었다. 
+
+```
+static void
+page_fault (struct intr_frame *f) 
+{
+... 
+  if(not_present || is_kernel_vaddr(fault_addr) || !user){
+   sys_exit(-1);
+  }
+...
+}
+```
+
+먼저, `not_present`를 통해 접근하려는 페이지가 메모리에 있는지 확인해준다. 다음으로, `is_kernel_vaddr` 함수를 사용하여 커널 메모리에 접근하려고 하는지를 검사한다. 마지막으로, `!user`를 통해 해당 함수 호출이 사용자 모드에서 발생했는지 확인해주었다. 정리하면, 페이지가 메모리에 없거나, 페이지 폴트가 커널 메모리에서 발생했거나, 사용자 모드에서 페이지 폴트가 발생했다면 (셋 중 하나라도 true 라면), `sys_exit` 함수 호출을 통해 해당 프로세스를 종료하도록 했다.
+
+이렇게 첫 번째 과제인 argument passing에서 요구하는 목적을 달성할 수 있다.
 
 ### Difference from design report
 
-`strtok_r` 함수를 사용하여 구현한다는 것은 랩 시간과 Pintos 문서에서도 설명되었기 때문에 명령어 parsing 과정을 어려움 없이 진행할 수 있었다. 그러나 `start_process` 함수에서 앞서 parsing한 인자들과 인자 개수, return address 등을 user stack에 추가하는 함수에 대한 구체적인 설계는 하지 않았다. 하지만 수업에서 배운 것처럼 user stack은 아래로 커지며 (address 적으로 설명 (나중에 추가)) 어떤 순서로 값이 저장되어야 하는지에 대한 개념을 바탕으로 구현을 완료하였다.
+`strtok_r` 함수를 사용하여 구현한다는 것은 랩 시간과 Pintos 문서에서도 설명되었기 때문에 명령어 parsing 과정을 어려움 없이 진행할 수 있었다. 그러나 `start_process` 함수에서 앞서 parsing한 인자들과 인자 개수, return address 등을 user stack에 추가하는 함수에 대한 구체적인 설계는 하지 않았다. 하지만 수업에서 배운 것처럼 user stack은 가장 높은 esp 에서부터 4byte 씩 감소하면서 순서대로 값이 저장되어야 하는지에 대한 개념을 바탕으로 구현을 완료하였다.
 
 
 ## 2. System Calls  
@@ -744,7 +742,10 @@ load (const char *file_name, void (**eip) (void), void **esp)
 ...
   file = filesys_open (file_name);
   ...
-  file_deny_write(file); // 실행중인 파일은 Write되면 안됨!!!
+  // 파일 획득 성공시
+  t->fileExec = file; 
+  file_deny_write(file); // 4. Denying Writes to Executables 
+  lock_release(&FileLock);
 ...
 }
 ```
