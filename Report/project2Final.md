@@ -106,8 +106,19 @@ thread_userprog_init(struct thread *t)
 (또한, `process_execute` 함수에서 앞서 설명한 `thread_create` 함수를 호출하며, 이 함수의 인자 중 하나로 `start_process`가 넘겨지는데, 이 함수에 대한 설명은 아래에 이어서 설명할 것이다.)
 
 ```
-/src/userprog/process.c & h 
-argument parsing function 추가
+int make_argv(char **argv, char *file_name){
+  char *cmd_1st;        /* file name */
+  char *cmd_remainder;  /* remainder */
+  char *iterS = strtok_r (file_name, " ", &cmd_remainder);
+  char *iterE = NULL;
+  int argc = 0;
+
+  for (cmd_1st = iterS; cmd_1st != iterE; cmd_1st = strtok_r (NULL, " ", &cmd_remainder)){
+    argv[argc] = cmd_1st;
+    argc++;
+  }
+  return argc;
+}
 ```
 
 위 함수에 대한 설명 (추가)
@@ -144,7 +155,46 @@ start_process (void *file_name_)
 이때 프로그램을 실행할 때 필요한 인자를 user stack에 추가해야 하며, 이 역할을 수행하는 함수를 새롭게 추가하였다.
 
 ```
-user stack function
+void cmd_stack_build(char **argv, int argc, void **esp){
+  /* argv[i][data] push */
+  int len = 0;
+  for (int i = argc - 1; i >= 0; i--) {
+    // 큰 index부터 차례로 push해야 한다. 
+    len = strlen(argv[i]); // len은 명령어의 단어 길이
+    *esp -= len + 1;
+    strlcpy(*esp, argv[i], len + 1);
+    argv[i] = *esp;
+  }
+
+  /* Align Stack */
+  // 만약 *esp가 4의 배수가 아니면
+  if ((uint32_t)(*esp) % 4 != 0) {
+    // *esp를 가장 가까운 4의 배수로 내림
+    *esp = *esp - ((uint32_t)(*esp) % 4);
+  }
+
+  /* NULL push */
+  *esp -= 4;
+  **(uint32_t **)esp = 0;
+  
+  /* argv[i] push */
+  for (int i = argc - 1; i >= 0; i--) {
+    *esp -= 4;
+    **(uint32_t **)esp = argv[i];
+  }
+  
+  /* argv push */
+  *esp -= 4;
+  **(uint32_t **)esp = *esp + 4;
+
+  /* argc push */
+  *esp -= 4;
+  **(uint32_t **)esp = argc;
+
+  /* return point push */
+  *esp -= 4;
+  **(uint32_t **)esp = 0;
+}
 ```
 
 위 함수를 보면, user stack에 순서대로 값을 넣는 것을 확인할 수 있다.
@@ -403,6 +453,26 @@ process_wait (tid_t child_tid)
 ```
 
  process wait 함수 설명 추가 (추가) 
+
+ ```
+struct thread *getChild(pid_t pid)
+{
+  struct list_elem *e;
+  struct list *childList = &thread_current()->childList;
+  struct list_elem *iterS = list_begin(childList);
+  struct list_elem *iterE = list_end(childList);
+  struct thread *retrunThread = NULL;
+
+  for (e = iterS; e != iterE; e = list_next (e))
+  {
+    struct thread *t = list_entry(e, struct thread, childElem);
+    if(t->tid == pid){
+      retrunThread = t;
+    }
+  }
+  return retrunThread;
+}
+```
 
 이후의 함수들은 파일 접근에 관한 기능들이다.
 
