@@ -331,8 +331,6 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
 ### Implementation & Improvement from the previous design 
 
-(추가) exit mem 함수 변경 후 아래의 설명에서 수정 필요 
-
 두 번째 과제는 system call을 구현하는 것이었다. system call은 user program이 OS 기능에 접근하기 위해 사용하는 함수들로 크게 두 가지로 나눌 수 있다. process 작동에 대한 기능들과 파일 접근에 대한 기능이다.  
 먼저 process 작동에 대한 기능으로는 `halt`, `exit`, `exec`, 그리고 `wait`가 있으며, 파일 접근에 대한 기능으로는 `create`, `remove`, `open`, `filesize`, `read`, `write`, `seek`, `tell`, 그리고 `close`가 있다.
 
@@ -358,7 +356,11 @@ void sys_exit(int status)
 ```
 pid_t sys_exec(const char *file)
 {
-exit_mem(file);
+
+  if(!verify_mem_address(file)){
+    sys_exit(-1);
+  }
+
 
 pid_t pid = process_execute(file);
 if (pid == -1) return -1;
@@ -370,10 +372,31 @@ return (child->isLoad) ? pid : -1;
 }
 ```
 
-`sys_exec`는 `file`로 전달된 `name`을 가진 실행 파일을 실행시키는 함수로, 새로운 프로세스의 `pid`(program id)를 반환한다. 해당 프로그램이 실행되지 못하면 `-1`을 반환한다. 먼저 `exit_mem` 함수를 통해 `file`이 올바른 사용자 주소를 가리키는지 확인한 후, `process_execute` 함수를 호출하여 사용자 프로그램을 실행한다. 이때, `process_execute` 함수의 반환값이 `-1`이면 실행되지 못한 것이므로, `sys_exec`도 `-1`을 반환하도록 한다.
+`sys_exec`는 `file`로 전달된 `name`을 가진 실행 파일을 실행시키는 함수로, 새로운 프로세스의 `pid`(program id)를 반환한다. 해당 프로그램이 실행되지 못하면 `-1`을 반환한다. 먼저 `verify_mem_address` 함수를 통해 `file`이 올바른 사용자 주소를 가리키는지 확인한 후, `process_execute` 함수를 호출하여 자식 프로세스를 생성한다. 이때, `process_execute` 함수의 반환값이 `-1`이면 실행되지 못한 것이므로, `sys_exec`도 `-1`을 반환하도록 한다.
 
+ ```
+struct thread *getChild(pid_t pid)
+{
+  struct list_elem *e;
+  struct list *childList = &thread_current()->childList;
+  struct list_elem *iterS = list_begin(childList);
+  struct list_elem *iterE = list_end(childList);
+  struct thread *retrunThread = NULL;
 
-child 부분 설명 (추가) 
+  for (e = iterS; e != iterE; e = list_next (e))
+  {
+    struct thread *t = list_entry(e, struct thread, childElem);
+    if(t->tid == pid){
+      retrunThread = t;
+    }
+  }
+  return retrunThread;
+}
+```
+
+그리고 위의 sys_exec 함수를 보면 getChild 함수 호출을 통해 자식 프로세스를 받아온 뒤 세마포어를 이용해 자식 process 에서 user program 이 load 될때까지 wait 하는 instruction 을 추가하였다. 이때, getChild 함수를 보면 현재 thread 의 자식 프로세스들을 for loop 를 통해 순회하며 만약 해당 tid 가 pid 와 동일하다면 해당 thread 를 반환하도록 하였다. 
+
+여기서 설정한 sema_down 은 위에서 설명한 start_process 에서 isLoad 를 true 로 바꿔주며 sema_up 또 함께 진행된다. 
 
 ```
 int sys_wait(pid_t pid)
@@ -405,27 +428,8 @@ process_wait (tid_t child_tid)
 }
 ```
 
- process wait 함수 설명 추가 (추가) 
+`sys_wait`를 구현하기 위해 사용된 `process_wait` 함수는 먼저 자식 프로세스의 존재 여부를 확인한다. 만약 자식 프로세스가 없다면 (즉, `NULL`이라면) 대기하지 않고 종료하기 위해 `-1`을 반환한다. 자식 프로세스가 존재하는 경우에는 자식 프로세스가 종료될 때까지 세마포어를 사용해 대기한 후, 자식 프로세스의 `exitCode`를 저장한다. 이후 자식 프로세스의 메모리를 해제하고 동기화를 해제한 다음, 저장한 `exitCode`를 반환한다.
 
- ```
-struct thread *getChild(pid_t pid)
-{
-  struct list_elem *e;
-  struct list *childList = &thread_current()->childList;
-  struct list_elem *iterS = list_begin(childList);
-  struct list_elem *iterE = list_end(childList);
-  struct thread *retrunThread = NULL;
-
-  for (e = iterS; e != iterE; e = list_next (e))
-  {
-    struct thread *t = list_entry(e, struct thread, childElem);
-    if(t->tid == pid){
-      retrunThread = t;
-    }
-  }
-  return retrunThread;
-}
-```
 
 이후의 함수들은 파일 접근에 관한 기능들이다.
 
@@ -445,19 +449,24 @@ bool sys_create(const char *file, unsigned initial_size)
 ```
 bool sys_remove(const char *file)
 {
-  exit_mem(file);
+    if(!verify_mem_address(file)){
+    sys_exit(-1);
+  }
+  
   return filesys_remove(file);
 }
 ```
 
-`sys_remove` 함수는 파일이 열려 있는지 여부와 상관없이 "file" 이름을 가진 파일을 삭제하는 역할을 하며, 파일 삭제 성공 여부를 반환한다. 이 함수는 열려 있는 파일을 삭제하더라도 해당 파일을 닫지 않는다. 이 함수에서도 `exit_mem` 함수를 사용하여 `file`이 유효한 주소를 가지는지 확인한 후, `filesys_remove` 함수를 호출하여 파일 삭제를 처리한다.
+`sys_remove` 함수는 파일이 열려 있는지 여부와 상관없이 "file" 이름을 가진 파일을 삭제하는 역할을 하며, 파일 삭제 성공 여부를 반환한다. 이 함수는 열려 있는 파일을 삭제하더라도 해당 파일을 닫지 않는다. 이 함수에서도 `verify_mem_address` 함수를 사용하여 `file`이 유효한 주소를 가지는지 확인한 후, `filesys_remove` 함수를 호출하여 파일 삭제를 처리한다.
 
 ```
 struct lock FileLock; // make file access ATOMIC
 ...
 int sys_open(const char *file)
 {
-exit_mem(file);
+  if(!verify_mem_address(file)){
+    sys_exit(-1);
+  }
 
 lock_acquire(&FileLock);
 struct file *f = filesys_open(file);
@@ -477,7 +486,7 @@ return fd;
 
 `sys_open` 함수는 "file"이라는 이름을 가진 파일을 여는 역할을 한다. 파일이 열리면 파일 디스크립터에 해당하는 양의 정수를 반환하고, 열리지 않으면 `-1`을 반환한다. 여기서 파일 디스크립터는 표준 입력 파일일 때 `0`, 표준 출력 파일일 때 `1`을 갖는다. 각 프로세스가 파일을 열 때마다 새로운 파일 디스크립터 번호가 할당되며, 이 파일 디스크립터는 각 프로세스별로 존재하며 자식 프로세스에는 전달되지 않는다. 또한, 동일한 파일을 여러 번 열 경우 매번 새로운 파일 디스크립터가 반환되므로, 각 파일 디스크립터는 별도로 닫아주어야 한다.
 
-이 함수에서는 `exit_mem` 함수를 통해 유효한 주소인지 확인한 후 `filesys_open` 함수를 사용하여 파일을 연다. 여러 프로세스가 동시에 동일한 파일을 여는 것을 방지하기 위해 `FileLock`을 사용하여 `lock_acquire`와 `lock_release`로 접근을 제어하였다. 파일이 성공적으로 열리면 해당 파일을 `fileTable`에 넣고, 현재 스레드의 `fileCnt`를 1 증가시킨다.
+이 함수에서는 `verify_mem_address` 함수를 통해 유효한 주소인지 확인한 후 `filesys_open` 함수를 사용하여 파일을 연다. 여러 프로세스가 동시에 동일한 파일을 여는 것을 방지하기 위해 `FileLock`을 사용하여 `lock_acquire`와 `lock_release`로 접근을 제어하였다. 파일이 성공적으로 열리면 해당 파일을 `fileTable`에 넣고, 현재 스레드의 `fileCnt`를 1 증가시킨다.
 
 ```
 int sys_filesize(int fd)
@@ -488,7 +497,7 @@ int sys_filesize(int fd)
 }
 ```
 
-`filesize` 함수는 `fd`라는 파일 디스크립터를 가진 파일의 크기를 바이트 단위로 반환한다. 이 함수는 `file_length` 함수를 사용하여 파일의 크기를 계산하고 반환한다.
+`sys_filesize` 함수는 `fd`라는 파일 디스크립터를 가진 파일의 크기를 바이트 단위로 반환한다. 이 함수는 `file_length` 함수를 사용하여 파일의 크기를 계산하고 반환한다.
 
 ```
 int sys_read(int fd, void *buffer, unsigned size)
@@ -496,11 +505,11 @@ int sys_read(int fd, void *buffer, unsigned size)
   if (fd < 0 || fd >= thread_current()->fileCnt || !verify_mem_address(buffer)) {
     sys_exit(-1);
   }
+
   int read_size = 0;
   lock_acquire(&FileLock);
 
   if (fd == 0) { 
-    // Read from standard input (keyboard)
     while (read_size < size && ((char *)buffer)[read_size] != '\0') {
         read_size++;
     }
@@ -519,29 +528,29 @@ int sys_read(int fd, void *buffer, unsigned size)
 }
 ```
 
-`read` 함수는 `fd`라는 파일 디스크립터를 가진 파일에서 "size" 바이트만큼 읽어와 `buffer`에 저장하는 역할을 한다. 실제로 읽은 바이트 수를 반환하며, 읽을 수 없는 경우 `-1`을 반환한다. 예를 들어, `fd`가 `0`인 경우 이는 표준 입력이므로 `input_getc` 함수를 사용하여 키보드 입력을 읽어온다. 이를 위해 `while` 루프를 사용하여 `read_size`를 1씩 증가시키도록 구현하였다. 그 외의 경우에는 `file_read` 함수를 호출하여 `read_size`를 계산하였다. 이 과정 또한 동시에 일어나지 않도록 `lock`을 사용하여 원자적으로 진행되도록 하였다. 
+`sys_read` 함수는 `fd`라는 파일 디스크립터를 가진 파일에서 "size" 바이트만큼 읽어와 `buffer`에 저장하는 역할을 한다. 실제로 읽은 바이트 수를 반환하며, 읽을 수 없는 경우 `-1`을 반환한다. 예를 들어, `fd`가 `0`인 경우 이는 표준 입력이므로 `input_getc` 함수를 사용하여 키보드 입력을 읽어온다. 이를 위해 `while` 루프를 사용하여 `read_size`를 1씩 증가시키도록 구현하였다. 그 외의 경우에는 `file_read` 함수를 호출하여 `read_size`를 계산하였다. 이 과정 또한 동시에 일어나지 않도록 `lock`을 사용하여 원자적으로 진행되도록 하였다. 
 
 ```
 int sys_write(int fd, const void *buffer, unsigned size)
 {
+ 
  for (int i = 0; i < size; i++) {
     if (!verify_mem_address(buffer + i)) {
         sys_exit(-1);
     }
-  }
+}
 
-  if (fd < 1 || fd >= thread_current()->fileCnt) {
+if (fd < 1 || fd >= thread_current()->fileCnt) {
     sys_exit(-1);
-  }
+}
 
-  int write_size = 0;
-  lock_acquire(&FileLock);
+int write_size = 0;
+lock_acquire(&FileLock);
 
-  if (fd == 1) {
-    // Write to standard output
+if (fd == 1) {
     putbuf(buffer, size);
     write_size = size;
-  } else {
+} else {
     struct file *f = thread_current()->fileTable[fd];
 
     if (f == NULL) {
@@ -550,16 +559,18 @@ int sys_write(int fd, const void *buffer, unsigned size)
     }
 
     write_size = file_write(f, buffer, size);
-  }
+}
 
-  lock_release(&FileLock);
-  return write_size;
+lock_release(&FileLock);
+return write_size;
 }
 ```
 
-(앞에 for loop 랑 if 문 설명 (추가))
+`sys_write` 함수는 `fd`라는 파일 디스크립터를 가진 파일에 "size" 바이트만큼 `buffer`에 저장된 내용을 작성하는 역할을 하며, 실제로 작성된 바이트 수를 반환한다. 일반적으로 기존 파일 크기보다 더 많은 내용을 작성할 경우 파일 크기가 증가하지만, Pintos의 기본 파일 시스템은 고정 크기 파일로 구현되어 있어 파일의 끝(end of file, EOF)에 도달할 때까지 작성된 바이트 수를 반환한다. 
 
-`write` 함수는 `fd`라는 파일 디스크립터를 가진 파일에 "size" 바이트만큼 `buffer`에 저장된 내용을 작성하는 역할을 하며, 실제로 작성된 바이트 수를 반환한다. 일반적으로 기존 파일 크기보다 더 많은 내용을 작성할 경우 파일 크기가 증가하지만, Pintos의 기본 파일 시스템은 고정 크기 파일로 구현되어 있어 파일의 끝(end of file, EOF)에 도달할 때까지 작성된 바이트 수를 반환한다. 예를 들어, `fd`가 `1`인 경우 이는 표준 출력이므로 `put_buf()` 함수를 사용하여 콘솔에 `buffer`에 저장된 값을 출력한다. `read` 함수와 유사하게 `file_write`를 이용하여 작성된 바이트 수인 `write_size`를 계산하였으며, 동시에 일어나는 접근을 막기 위해 `lock`을 사용하여 원자적으로 처리하였다.
+먼저, `buffer`에서 `size`만큼의 메모리가 유효한 사용자 주소인지 확인하기 위해 `for` 루프를 통해 `buffer`의 각 바이트를 검사한다. 이를 위해 `verify_mem_address` 함수를 사용하여 `buffer + i` 주소가 유효한지 1바이트씩 확인해주었다. 이후, 주어진 파일 디스크립터가 유효한지 확인하였다. 쓰기 작업이므로 `fd`는 `1` 이상이어야 하며, 현재 스레드의 파일 개수(`fileCnt`)보다 크면 안된다. 두 조건 중 하나라도 만족하지 않으면 `sys_exit` 함수를 호출하여 오류를 처리해주었다.
+
+예를 들어, `fd`가 `1`인 경우 이는 표준 출력이므로 `put_buf()` 함수를 사용하여 콘솔에 `buffer`에 저장된 값을 출력한다. `read` 함수와 유사하게 `file_write`를 이용하여 작성된 바이트 수인 `write_size`를 계산하였으며, 동시에 일어나는 접근을 막기 위해 `lock`을 사용하여 원자적으로 처리하였다.
 
 ```
 void sys_seek(int fd, unsigned position)
@@ -571,7 +582,7 @@ void sys_seek(int fd, unsigned position)
 }
 ```
 
-`seek` 함수는 `fd`라는 파일 디스크립터를 가진 파일에서 읽거나 쓸 때 시작 위치를 `position`으로 변경하는 역할을 한다. `position`이 `0`이라면 파일의 시작점을 가리킨다. 만약 파일의 끝(EOF) 이후 위치를 가리키면, `read` 시 `0`을 반환하고, `write` 시에는 앞서 설명한 이유로 오류가 발생할 수 있다. 따라서 `position` 위치를 확인하는 과정이 필요하다. 이 함수는 `file_seek` 함수를 이용하여 구현하였다.
+`sys_seek` 함수는 `fd`라는 파일 디스크립터를 가진 파일에서 읽거나 쓸 때 시작 위치를 `position`으로 변경하는 역할을 한다. `position`이 `0`이라면 파일의 시작점을 가리킨다. 만약 파일의 끝(EOF) 이후 위치를 가리키면, `read` 시 `0`을 반환하고, `write` 시에는 앞서 설명한 이유로 오류가 발생할 수 있다. 따라서 `position` 위치를 확인하는 과정이 필요하다. 이 함수는 `file_seek` 함수를 이용하여 구현하였다.
 
 ```
 unsigned sys_tell(int fd)
@@ -582,7 +593,7 @@ unsigned sys_tell(int fd)
 }
 ```
 
-`tell` 함수는 `fd`라는 파일 디스크립터를 가진 파일의 다음 읽기 또는 쓰기 위치인 다음 바이트의 위치를 반환한다. 이 함수는 `file_tell` 함수를 이용하여 구현하였다.
+`sys_tell` 함수는 `fd`라는 파일 디스크립터를 가진 파일의 다음 읽기 또는 쓰기 위치인 다음 바이트의 위치를 반환한다. 이 함수는 `file_tell` 함수를 이용하여 구현하였다.
 
 ```
 void sys_close(int fd)
@@ -596,38 +607,25 @@ void sys_close(int fd)
 }
 ```
 
-마지막으로 `close` 함수는 `fd`라는 파일 디스크립터를 가진 파일을 닫는 역할을 한다. 프로세스가 종료될 때, 이 함수가 호출되어 모든 열려 있는 파일 디스크립터들이 자동으로 닫힌다. 이 함수는 `file_close` 함수를 호출하여 파일을 닫고, 해당 파일 디스크립터에 해당하는 `fileTable` 값도 `NULL`로 처리하였다.
+마지막으로 `sys_close` 함수는 `fd`라는 파일 디스크립터를 가진 파일을 닫는 역할을 한다. 프로세스가 종료될 때, 이 함수가 호출되어 모든 열려 있는 파일 디스크립터들이 자동으로 닫힌다. 이 함수는 `file_close` 함수를 호출하여 파일을 닫고, 해당 파일 디스크립터에 해당하는 `fileTable` 값도 `NULL`로 처리하였다.
 
 ```
-void exit_mem(const char *file)
-{
-  if(!verify_mem_address(file)){
-    sys_exit(-1);
-  }else{
-    // nothing to do..
-  }
-}
-
 bool verify_mem_address(void *addr)
 {
   return addr >= (void *)0x08048000 && addr < (void *)0xc0000000 ;
 }
 ```
 
-(추가) 둘중 하나로 바꾸고 설명 추가 
+위의 syscall 함수들에서 유효한 address 값을 가지고 있는지 확인하기 위해 사용된 함수이다. 0x08048000은 user 영역의 시작주소를 나타내며, 0xc0000000은 커널 영역의 시작주소를 나타낸다. 
 
 ```
 void getArgs(void *esp, int *arg, int count)
 {
   for (int i = 0; i < count; i++)
   {
-    /*
-    if(!verify_mem_address(esp + 4 * i))
-    {
-      sys_exit(-1);
+  if(!verify_mem_address(esp + 4 * i)){
+    sys_exit(-1);
     }
-    */
-    exit_mem(esp + 4 * i);
     arg[i] = *(int *)(esp + 4 * i);
   }
 }
@@ -709,16 +707,8 @@ syscall_handler(struct intr_frame *f)
 
 
 ### Difference from design report 
-```
-design report:
-현재 syscall_handler는 바로 종료하는 방식으로 구현되어 있으므로, 이 부분을 우선적으로 수정해야 한다. 우선 intr_frame의 esp 값을 읽어와, 스택에 사용자 프로그램이 push한 인자들과 시스템 호출 번호를 4바이트 단위로 읽어들여 이를 스택 또는 큐에 복사해 저장한다. 이후 시스템 호출에 필요한 정보를 syscall_handler에 저장하여 처리할 수 있도록 한다.
 
-그 후 syscall_handler에 각 시스템 호출 번호에 해당하는 헬퍼 함수를 정의하고 구현하여, 각 번호에 맞는 시스템 호출이 적절한 헬퍼 함수에서 처리되도록 구현한다. 예를 들어, sys_exit_helper와 같은 헬퍼 함수를 통해 시스템 호출 번호와 인자를 전달하고, 반환된 값을 intr_frame의 eax에 저장할 수 있도록 한다. 이때 적절한 헬퍼함수의 구현은 아래 4번 file system관련해서 구현해야하는 함수와 중복된다. 예를들어 file creation과 관련된 syscall을 수행하는 함수의 경우 파일 시스템 함수를 그대로 사용하면 될것이다.
-
-또한, 시스템 호출 및 실행 파일 쓰기 제한을 위한 pcb(프로세스 제어 블록) 구조체를 새롭게 정의하고자 한다. pcb에는 프로세스의 고유 ID, 부모 프로세스, 파일 시스템 접근을 위한 플래그 변수, 대기 처리를 위한 변수, 현재 실행 중인 파일이 포함되어야 한다. 그리고 thread 구조체에 이 pcb 포인터를 추가한 뒤, 프로세스가 생성되고 시작될 때(start_process 시점)에 해당 스레드의 pcb를 초기화할 예정이다. 여기서 추가된 현재 실행 중인 파일을 가리키는 포인터는 아래의 4번 과제에서 더 자세히 설명할 예정이다.
-```
-
-기존의 design report 내용과 유사함. (디테일만 추가 됨) 
+전체적인 로직은 기존 design report의 내용과 유사하나, 몇 가지 추가된 사항이 있다. 먼저, 기존의 design report에서는 인자를 저장하는 과정을 고려하지 않고 각 시스템 호출(syscall) 내부 함수만 구상하였으나, 새롭게 `syscall_handler`의 `switch-case`에서 사용자 스택에서 `pop`하여 인자를 전달하는 함수가 필요하여 구현하였다. 그리고 몇몇 시스템 호출 함수에서 사용자 영역에 접근하는지 확인하기 위해 `verify_mem_address` 함수를 추가 구현하여 잘못된 메모리 접근을 방지하였다.
 
 
 ## 3. Process Termination Messages 
@@ -731,7 +721,7 @@ design report:
 void sys_exit(int status)
 {
   thread_current()->exitCode = status;
-  printf("%s: exit(%d)\n", thread_name(), status); // 이부분 
+  printf("%s: exit(%d)\n", thread_name(), status); // 3. Process Termination Messages 
   thread_exit();
 }
 ```
@@ -746,8 +736,6 @@ void sys_exit(int status)
 ### Implementation & Improvement from the previous design 
 
 마지막 과제는 열려 있는 파일에 쓰기 작업을 하지 않도록 하는 것이다. Pintos 문서에 나타난 대로 파일을 열 때 `file_deny_write` 함수를 함께 호출하여 쓰기를 제한하고, 파일을 닫을 때 `file_allow_write` 함수를 이용해 쓰기를 허용하는 과정을 추가하면 된다.
-
-``` file_deny_write 이랑 file_allow_write 함수 설명 추가해야 하는지? 디자인 레포트에서 설명하긴 했는데..  (나중에 추가) ```
 
 ```
 bool
@@ -796,12 +784,20 @@ file_close (struct file *file)
 기존에는 `load` 함수에서 `file_deny_write` 함수를 호출하여 쓰기를 제한하고, 파일을 닫을 때가 아닌 `process_exit` 함수가 호출될 때 `file_allow_write` 함수를 호출하여 다시 쓰기를 허용하는 방식으로 설계하였다. 그러나 syscall을 구현하면서 `sys_open` 함수에서도 파일을 열어 쓰기를 제한하는 과정이 필요하며, 반대로 `process_exit` 대신 `file_close` 함수에서 이미 `file_allow_write` 함수를 사용하므로 별도로 쓰기 허용 작업을 추가하지 않아도 된다는 점을 알게 되어 이와 같이 수정하였다. 
 
 ### Overall Limitations 
--> write 함수에서 파일 늘어나는거 구현안된거
 
-file 닫는거 헷갈렸다는 점 추가 
+이번 과제는 기존 프로젝트에서 새롭게 정의해야 할 구조들이 많아서 특히 어렵게 느껴졌다. 각 스레드별로 PCB와 파일을 관리할 수 있도록 변수를 정의해야 했는데, 구현 과정에서 계속 변수가 추가되면서 수정을 자주 해야 하는 어려움이 있었다. 원래는 PCB와 파일을 별도의 구조체로 관리하려 했으나, syscall 부분에서 하위 클래스에 반복적으로 접근하다 보니 복잡해져, 최종적으로 스레드 구조체에 PCB와 파일 관리를 위한 변수를 모두 정의하는 것으로 수정하였다.
+
+또한, 사용자 영역의 메모리에 접근하는 것이 올바른지 확인하고, race condition을 방지하기 위해 세마포어를 사용했는데, 어떤 함수에서 필수적인지 파악하는 데 시간이 많이 걸렸다.
+
+마지막으로, 과제 4번에서 언급한 `file_close` 함수도 초기에는 design report의 잘못된 접근 방식을 시도하여 오류가 발생했으나, `file_close` 함수를 제대로 확인하여 과제를 마무리할 수 있었다.
 
 ### Overall Discussion 
 
+이번 과제를 통해 PCB (Process Control Block)와 사용자 스택에 대해 이해할 수 있었다. 각 프로세스가 생성될 때마다 PCB가 할당되며, 이를 통해 부모-자식 프로세스 간의 관계를 유지할 수 있었다. 또한, PCB는 해당 프로세스가 실행 중인지 대기 중인지 등을 나타내기 위해 Boolean 변수와 세마포어(semaphore)를 사용하여 구현할 수 있었다. 
+
+그리고 이번 과제를 통해 사용자 스택의 메모리 관리 방식도 이해할 수 있었다. 사용자 스택은 주로 함수 호출 시 함수 인자와 반환 주소 등을 저장하는 역할을 하며, 스택의 가장 높은 주소부터 4바이트씩 감소하면서 각 인자와 반환 주소를 저장하는 구조를 배울 수 있었다.
+
+마지막으로, 사용자 프로그램에서 발생하는 시스템 호출의 몇 가지 동작 방식과 파일 저장, 실행, 종료 방식에 대해서도 학습할 수 있었다.
 
 # Result 
 ~pintos/src/userprog에서 make check한다. 아래와 같이 80pass가 나옴을 확인했다.
