@@ -168,8 +168,9 @@ palloc_free_multiple (void *pages, size_t page_cnt)
 }
 ```
 
-(문법 검사) 
-page_from_pool 함수는 위에서 설명한 palloc_free_multiple 함수에서 사용된 함수로 user 메모리 풀에 해당하는지 kernel 메모리 풀에 해당하는지를 반환해주는 함수이다. 인수로 받아온 page 의 주소가 해당 메모리 풀의 시작 페이지 주소보다 크고 마지막 페이지 주소보다 작은지 확인 후 boolean 변수를 반환한다. 
+`page_from_pool` 함수는 앞서 설명한 `palloc_free_multiple` 함수에서 사용되며, 전달받은 페이지가 사용자 메모리 풀(`user memory pool`)에 속하는지 또는 커널 메모리 풀(`kernel memory pool`)에 속하는지를 판별하여 반환하는 함수이다. 
+
+이 함수는 인수로 전달받은 페이지(`page`)의 주소가 해당 메모리 풀의 시작 페이지 주소보다 크고, 마지막 페이지 주소보다 작은지를 확인한 뒤, 결과를 `boolean` 값으로 반환한다.
 
 ```
 static bool
@@ -183,8 +184,11 @@ page_from_pool (const struct pool *pool, void *page)
 }
 ```
 
-(문법 검사)
-load_segment 함수는 프로세스의 메모리 공간에 파일의 데이터를 저장하는 함수이다. 먼저 프로젝트 2에서 사용했던 file_seek 함수를 이용해서 file read 가 시작하는 위치를 ofs 로 설정해준다. 그리고 read_bytes 혹은 zero_bytes 가 남아있는 경우 while loop 를 돌면서 file_read 함수를 통해 page_read_bytes 만큼 읽고 kpage 에 저장해준다. page_read_bytes 만큼 읽었다면 현재페이지로부터 남은 파이트를 0 으로 초기화해주고 만약 page_read_bytes 만큼 읽지 못했다면 palloc_free_page 를 해준다. 
+`load_segment` 함수는 프로세스의 메모리 공간에 파일 데이터를 저장하는 역할을 한다. 먼저, 프로젝트 2에서 사용했던 `file_seek` 함수를 이용해 파일 읽기의 시작 위치를 `ofs`로 설정한다. 
+
+이후, `read_bytes` 또는 `zero_bytes`가 남아 있는 동안 `while` 루프를 실행한다. 루프 안에서는 `file_read` 함수를 호출해 `page_read_bytes`만큼 데이터를 읽고, 이를 `kpage`에 저장한다. 
+
+데이터를 성공적으로 `page_read_bytes`만큼 읽었다면, 현재 페이지에서 남은 바이트를 0으로 초기화한다. 그러나 만약 `page_read_bytes`만큼 데이터를 읽지 못한 경우, `palloc_free_page`를 호출해 할당된 페이지를 해제한다.
 
 ```
 static bool
@@ -233,8 +237,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 }
 ```
 
-(문법 검사)
-install_page 함수는 가상메모리 공간인 upage 에 현제 프로세스의 physical 메모리 공간인 kpage를 매핑하는 역할을 한다. pagedir_get_page 함수와 pagedir_set_page 함수를 이용해서 먼저 upage 가 page directory 에 없는 것을 확인하고, upage 를 kpage 에 매핑하고 성공 여부를 반환해준다. 여기서 사용하는 pagedir_get_page 와 pagedir_set_page 함수는 아래에서 설명할 예정이다. 
+`install_page` 함수는 가상 메모리 공간인 `upage`를 현재 프로세스의 물리적 메모리 공간인 `kpage`에 매핑하는 역할을 한다. 먼저, `pagedir_get_page` 함수를 사용해 `upage`가 페이지 디렉토리에 존재하지 않는지 확인한다. 이후, `pagedir_set_page` 함수를 호출해 `upage`를 `kpage`에 매핑하고, 매핑 성공 여부를 반환한다. 이 함수에서 사용되는 `pagedir_get_page`와 `pagedir_set_page` 함수에 대한 상세 설명은 아래에서 다룰 예정이다.
 
 ```
 static bool
@@ -272,8 +275,9 @@ setup_stack (void **esp)
 }
 ```
 
-(문법 검사)
-다음으로, 위에서 자주 나왔던 page directory 와 관련된 함수에 대해서 알아보았다. page directory 는 저번 프로젝트 2에서 나온 개념으로 virtual memory space 를 physical memory space 로 매핑하기 위해 page table을 관리한다. 먼저, pagedir_create 함수는 새로운 page directory 를 생성하는 함수로 memcpy 를 통해 init_page_dir 에서 PGSIZE 크기의 데이터를 pd 에 복사 후 pd 를 반환하는 역할을 한다. 
+다음으로, 위에서 자주 언급된 페이지 디렉토리(`page directory`)와 관련된 함수들에 대해 살펴보았다. 페이지 디렉토리는 이전 프로젝트 2에서 다룬 개념으로, 가상 메모리 공간(`virtual memory space`)을 물리 메모리 공간(`physical memory space`)에 매핑하기 위해 페이지 테이블(`page table`)을 관리하는 역할을 한다. 
+
+먼저, `pagedir_create` 함수는 새로운 페이지 디렉토리를 생성하는 함수이다. 이 함수는 `memcpy`를 사용해 `init_page_dir`의 `PGSIZE` 크기 데이터를 새로 생성된 `pd`에 복사한 뒤, 생성된 `pd`를 반환한다.
 
 ```
 uint32_t *
@@ -286,8 +290,7 @@ pagedir_create (void)
 }
 ```
 
-(문법 검사)
-pagedir_destroy 함수는 해당 page directory 에 있는 모든 resource 를 free 해주는 함수이다. for loop 를 통해 page directory 내부의 각 entry 를 순회하면서 먼저 page table 의 주소를 가져온다. for loop 를 통해서 해당 page table 의 entry 를 순회하면서 각 entry 를 palloc_free_page 해준 다음 모든 entry 가 free 되고 모든 page directory 의 entry 를 순회하고 나면 마지막으로 해당 page directory 자체를 free 해준다. 
+`pagedir_destroy` 함수는 지정된 페이지 디렉토리(`page directory`)에 포함된 모든 리소스를 해제(`free`)하는 역할을 한다. 이 함수는 `for` 루프를 사용해 페이지 디렉토리 내부의 각 엔트리(entry)를 순회하면서, 먼저 해당 페이지 테이블의 주소를 가져온다. 이후, 또 다른 `for` 루프를 통해 페이지 테이블의 각 엔트리를 순회하며, 각 엔트리를 `palloc_free_page`를 사용해 해제한다. 모든 엔트리를 해제한 후, 페이지 테이블의 모든 엔트리를 순회가 완료되면 마지막으로 해당 페이지 디렉토리 자체를 해제한다.
 
 ```
 void
@@ -314,8 +317,7 @@ pagedir_destroy (uint32_t *pd)
 }
 ```
 
-(문법 검사)
-lookup_page 함수는 인수로 받아오는 vaddr 에 해당하는 PTE (page table entry) 를 찾거나 생성하는 함수이다. 이때 유의할 점은 만약 create 를 하는 경우 vaddr 이 kernel 영역의 주소라면 새 페이지 테이블을 생성할 수 없기 때문에 예외처리를 해주어야 한다. 먼저, vaddr 의 상위 10비트를 pde(page directory entry) 값으로 저장하고 만약 create 해주어야 한다면 palloc_get_page 함수와 pde_create 함수를 통해 새로운 PDE 를 생성해준다. 이후, pde_get_pt 함수를 통해 해당 PDE 에 해당하는 page table 의 physical memory 주소를 가져온다. 이후에 vaddr 에 해당하는 page table entry 를 반환해준다. 
+`lookup_page` 함수는 인자로 전달받은 `vaddr`에 해당하는 PTE(Page Table Entry)를 찾거나 생성하는 함수이다. 이 함수에서 주의할 점은, `create` 옵션이 활성화된 경우라도 `vaddr`이 커널 영역의 주소일 경우 새 페이지 테이블을 생성할 수 없으므로 예외 처리가 필요하다는 것이다. 먼저, `vaddr`의 상위 10비트를 추출하여 이를 `pde`(Page Directory Entry) 값으로 저장한다. 만약 새로운 엔트리를 생성(`create`)해야 한다면, `palloc_get_page`와 `pde_create` 함수를 사용하여 새로운 PDE를 생성한다. 그 후, `pde_get_pt` 함수를 통해 해당 PDE가 가리키는 페이지 테이블의 물리 메모리 주소를 가져온다. 마지막으로, `vaddr`에 해당하는 PTE를 반환한다.
 
 ```
 static uint32_t *
@@ -351,8 +353,9 @@ lookup_page (uint32_t *pd, const void *vaddr, bool create)
 }
 ```
 
-(문법 검사)
-pagedir_activate 함수는 위에서 create한 page directory 를 활성화해주는 역할을 한다. 만약 인수로 받아온 page directory 가 비어있다면 (NULL 일 경우) init_page_dir 함수를 이용해 initial page directory 형태로 활성화해준다. 
+`pagedir_activate` 함수는 앞서 생성된 페이지 디렉토리(`page directory`)를 활성화하는 역할을 한다. 
+
+만약 인자로 전달받은 페이지 디렉토리가 비어있거나(NULL인 경우), 해당 디렉토리가 유효하지 않다면, `init_page_dir` 함수를 호출하여 초기 페이지 디렉토리 형태로 활성화한다.
 
 (추가)
 "asm volatile ("movl %0, %%cr3" : : "r" (vtop (pd)) : "memory");" 부분 설명
@@ -373,10 +376,9 @@ pagedir_activate (uint32_t *pd)
 }
 ```
 
-(문법 검사)
-다음으로, pagedir_set_page 함수는 매핑을 해주는 함수로 몇가지 조건 확인 후 매핑을 진행한다. 먼저, upage (가상 주소)가 페이지의 시작을 가리겨야한다. 그리고 kpage (physical 주소) 역시 페이지의 시작 주소여야 한다. 다음으로, upage 가 user memory pool 에 있어야하며, kpage 가 physical memory 영역 안에 있어야한다. 마지막으로, page directory 를 init_page_dir 에 매핑하지 않도록 한다. 왜냐면 user process 의 page directory 만 접근하도록 해야되기 때문이다. 
+다음으로, `pagedir_set_page` 함수는 매핑을 수행하는 함수로, 몇 가지 조건을 확인한 후 매핑을 진행한다. 먼저, `upage`(가상 주소)가 반드시 페이지의 시작을 가리켜야 한다. 또한, `kpage`(물리 주소) 역시 페이지의 시작 주소여야 한다. 그다음으로, `upage`는 사용자 메모리 풀(user memory pool)에 속해야 하며, `kpage`는 물리 메모리 영역 내에 있어야 한다. 마지막으로, 페이지 디렉토리가 `init_page_dir`에 매핑되지 않도록 해야 하는데, 이는 사용자 프로세스의 페이지 디렉토리만 접근할 수 있도록 하기 위함이다. 
 
-위의 사항들을 확인 한 후, 위에서 설명한 lookup_page 함수를 이용해 PTE 를 찾고, pte_create_user 함수를 이용해 kpage 를 upage 에 매핑해준다. 이때 매핑의 성공 여부를 boolean 변수로 반환해준다. 
+위의 조건들을 확인한 후, 앞서 설명한 `lookup_page` 함수를 이용해 PTE를 찾고, `pte_create_user` 함수를 사용해 `kpage`를 `upage`에 매핑한다. 이때 매핑의 성공 여부는 `boolean` 값으로 반환된다. 
 
 ```
 bool
@@ -403,8 +405,7 @@ pagedir_set_page (uint32_t *pd, void *upage, void *kpage, bool writable)
 }
 ```
 
-(문법 검사)
-pagedir_get_page 함수는 uaddr 에 매핑된 physical address 를 반환해주는 함수이다. loopup_page 함수를 이용해 uaddr 에 해당하는 pte 를 저장하고 pte_get_page 함수를 통해 pte 에 해당하는 physical page 의 시작 주소를 가져온다. 그리고 uaddr 의 offset 을 더해준 값을 반환하여 결과적으로 physical address 를 반환한다. 
+`pagedir_get_page` 함수는 `uaddr`에 매핑된 물리적 주소(physical address)를 반환하는 함수이다. 먼저, `lookup_page` 함수를 호출해 `uaddr`에 해당하는 PTE(Page Table Entry)를 찾고 이를 저장한다. 그런 다음, `pte_get_page` 함수를 사용해 해당 PTE에 매핑된 물리적 페이지(physical page)의 시작 주소를 가져온다. 마지막으로, `uaddr`의 오프셋(offset)을 이 물리적 페이지의 시작 주소에 더한 값을 반환하여, 최종적으로 물리적 주소를 계산해 반환한다. 
 
 ```
 void *
@@ -422,8 +423,7 @@ pagedir_get_page (uint32_t *pd, const void *uaddr)
 }
 ```
 
-(문법 검사)
-pagedir_clear_page 함수는 upage 와 매핑되어있는 pte 를 clear 하는 함수이다. 이번 함수 역시 lookup_page 함수를 통해 PTE 를 찾은 다음, invalidate_pagedir 함수를 통해 페이지 매핑을 없앤 것을 TLB를 재활성화 시켜 up to date 매핑을 갖고 있도록한다다 . 이 함수에서도 비슷하게 upage 가 시작 주소인지 와 사용자 영역의 가상 주소인지 확인해준다. 
+`pagedir_clear_page` 함수는 `upage`와 매핑된 PTE(Page Table Entry)를 해제하는(clear) 함수이다. 이 함수는 먼저 `lookup_page` 함수를 사용해 `upage`에 해당하는 PTE를 찾는다. 이후, `invalidate_pagedir` 함수를 호출하여 페이지 매핑을 제거하고, TLB(Translation Lookaside Buffer)를 재활성화하여 최신 상태의 매핑을 유지할 수 있도록 한다. 또한, 이 함수에서도 `upage`가 페이지의 시작 주소인지와 사용자 영역의 가상 주소인지 여부를 확인하여 조건을 만족하는 경우에만 동작을 수행한다.
 
 ```
 void
@@ -443,8 +443,8 @@ pagedir_clear_page (uint32_t *pd, void *upage)
 }
 ```
 
-(문법 검사)
-아래의 네 개의 함수들을 설명하기 전에 먼저 dirty 와 clean 의 차이에 대해서 설명하자면 어떤 가상 주소가 dirty 라는 것은 변경되었다는 것을 의미하고 clean 하다는 것은 up to date 정보가 저장되어있다는 것을 뜻한다. 아래의 pagedir_is_dirty 함수는 lookup_page 함수를 통해 먼저 vpage 에 해당하는 PTE 를 찾고, 해당 pte 가 수정된 적이 있는지 PTE_D 비트를 사용해 확인하고 결과를 boolean 타입으로 반환해준다. 
+먼저, 네 개의 함수를 설명하기 전에 `dirty`와 `clean`의 차이에 대해 알아보았다다. 가상 주소가 `dirty`하다는 것은 해당 데이터가 변경되었음을 의미한다. 
+`pagedir_is_dirty` 함수는 `lookup_page` 함수를 사용해 `vpage`에 해당하는 PTE(Page Table Entry)를 찾은 후, 해당 PTE가 수정된 적이 있는지 `PTE_D` 비트를 확인하여 결과를 `boolean` 값으로 반환한다.
 
 ```
 bool
@@ -455,9 +455,7 @@ pagedir_is_dirty (uint32_t *pd, const void *vpage)
 }
 ```
 
-(문법 검사)
-아래의 pagedir_set_dirty 함수는 위에서 언급한 vpage 의 PTE_D 를 수정해주는 함수이다. 만약 dirty 인수가 true 라면 PTE_D 를 설정해주고 만약 dirty 가 아닐 경우, PTE_D 를 해제해주고 invaidate_pagedir 함수를 통해 TLB (translation lookaside buffer) 를 재활성화시켜주어야 한다. 
-
+`pagedir_set_dirty` 함수는 위에서 언급한 `vpage`의 `PTE_D` 비트를 수정하는 함수이다. 만약 `dirty` 인수가 `true`라면 `PTE_D`를 설정하고, 그렇지 않은 경우 `PTE_D`를 해제한 뒤 `invalidate_pagedir` 함수를 호출해 TLB(Translation Lookaside Buffer)를 재활성화한다.
 
 ```
 void
@@ -477,9 +475,7 @@ pagedir_set_dirty (uint32_t *pd, const void *vpage, bool dirty)
 }
 ```
 
-(문법 검사)
-pagedir_is_accessed 함수는 vpage 에 접근되었는지를 확인하는 함수이다. 위에서와 비슷하게 PTE_A 값을 활용해 반환해준다. PTE_A 값을 CPU 가 해당 vpage 에 읽기 또는 쓰기를 했는지 여부를 나타내주는 flag 이다. 
-
+`pagedir_is_accessed` 함수는 `vpage`가 접근된 적이 있는지를 확인하는 함수이다. `PTE_A` 값을 활용하여 반환하며, `PTE_A`는 CPU가 해당 `vpage`에 대해 읽기 또는 쓰기 작업을 수행했는지 나타내는 플래그이다.
 
 ```
 bool
@@ -506,8 +502,7 @@ pagedir_set_accessed (uint32_t *pd, const void *vpage, bool accessed)
 }
 ```
 
-(문법 검사)
-이렇게 앞에서 palloc 과 stack, 그리고 page directory 에 대해서 알아봤고, 이제는 page fault 가 발생했을 때 어떤 동작이 작동하는지에 대해서 알아볼 것이다. 아래의 page_fault 함수를 보면 kill 함수를 통해 page fault 가 발생한 프로세스를 바로 종료해주는 것을 볼 수 있다. 하지만 이번 과제에서는 바로 kill 하는 것이 아니라 disk 에서 알맞은 page 를 메모리에서 load 해주는 과정을 구현할 것이다. 관련 내용은 아래의 design 파트에서 더 자세히 설명할 예정이다. 
+지금까지 `palloc`, `stack`, 그리고 `page directory`에 대해 알아보았다. 이제는 페이지 폴트(page fault)가 발생했을 때 어떤 동작이 수행되는지 살펴보자. 아래의 `page_fault` 함수는 `kill` 함수를 호출해 페이지 폴트가 발생한 프로세스를 즉시 종료한다. 그러나 이번 과제에서는 프로세스를 바로 종료하지 않고, 디스크에서 적절한 페이지를 메모리에 로드하는 과정을 구현할 것이다. 이에 대한 자세한 내용은 아래 `design` 파트에서 설명할 예정이다.
 
 ```
 static void
