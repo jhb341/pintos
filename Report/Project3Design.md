@@ -650,8 +650,24 @@ lazy load는 page fault의 발생으로 부터 시작된다. page fault시 virtu
 
 ### 3. Supplemental page table
 #### Basics
-pintos상의 page table을 보충하는 용도로 구현한다. virtual memory의 정보를 관리할 수 있도록 page table에 추가적인 정보를 더한 구조체를 하나의 entry로 한다. 특정 Virtual Page Number (VPN)에 해당하는 page
+pintos상의 page table을 보충하는 용도로 구현한다. virtual memory의 정보를 관리할 수 있도록 page table에 추가적인 정보를 더한 구조체를 하나의 entry로 한다. 
+
+#### Limitation and Necessity
+앞서 설명한바와 같이 현재 구현된 Page Table은 `present`, `read/write`, `user/supervisor`, `accessed`, `dirty`, `availability`의 정보만을 담는다. (***진짜인지 확인***) 그러나 lazy loading을 위해 page fault를 handling하기 위해서는 추가적인 정보를 포함하여야 한다.
+
+#### Blueprint (proposal)
+##### Data structure
+
+##### pseudo code or algorithm
+
+
+
 ### 4. Stack growth
+#### Basics
+프로세스는 4KB이상의 stack영역을 필요로 할 수 있다. (예를 들어, 매우 많은 횟수의 재귀 함수의 수행) 이 경우 kernel에서 stack을 추가적으로 확보해주어야 하지만 pintos의 기존 구현에서는 이러한 기능이 없다. 따라서 이러한 프로세스의 추가적인 요청에 따라 stack을 더 넓혀주는 기능이 필요하다.
+
+#### Limitation and Necessity
+기존 pintos는 고정된 4KB의 stack size를 제공하고 있으며 프로세스의 추가적인 4KB이상의 stack 요청이 있을 경우 page fault가 발생한다. 
 
 ### 5. File memory mapping
 #### Basics
@@ -711,3 +727,16 @@ void do_swap_in ()
 ```
 
 ### 7. On process termination
+#### Basics
+프로세스가 종료할 때, 할당된 모든 자원을 해제하여 메모리 누수를 방지해야한다. 이는 lock에도 해당하며 lock을 release 하지 않은채 종료되면 추후 deadlock이 발생할 수 있기 때문이다. 따라서 본 과제에서는 lock을 포함한 모든 자원을 할당 해제하는 것을 목표로 한다.
+
+#### Limitation and Necessity
+앞서 pintos에 추가적으로 구현한 data structure와 함수들에 대해서 프로세스 종료에 따른 자원 반납에 대한 기능 구현은 당연히 기존 pintos에서 제공되지 않는다. 따라서 메모리 누수와 deadlock 방지를 위해서 on process termination에 대한 구현이 필요하다. 이때 pintos에서 자원 할당 해제 및 반납에 대한 기능이 구현되지는 않았으나 `process_exit`함수로 process의 종료를 관리할 수 있으므로 해당 함수의 modifying으로 구현한다. 
+
+#### Blueprint (proposal)
+##### Data structure
+모든 lock을 관리하는 list data structure `all_LockList`를 선언하여 acquire되고 release되는 모든 lock을 추적한다. MMF의 경우 `mmfList`에서 동일한 기능을 수행하고 있으므로 추가적인 자료구조의 구현이 불필요하다. 이때 모든 lock은 `all_LockList`에 자기 자신을 연결해야 하므로 lock 구조체 필드에 list_elem을 추가해야 한다. 
+
+##### pseudo code or algorithm
+
+
