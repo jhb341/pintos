@@ -561,6 +561,12 @@ page_fault (struct intr_frame *f)
 
 ### 1. Frame table
 
+#### Basics
+
+#### Limitations and Necessity
+
+#### Blueprint
+
 ### 2. Lazy loading 
 
 ### 3. Supplemental page table
