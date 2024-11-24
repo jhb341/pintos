@@ -558,19 +558,22 @@ page_fault (struct intr_frame *f)
 ```install page 설명 ?```
 
 ## Design Implementation 
-
+***
 ### 1. Frame table
-
+***
 #### Basics
+***
 Physical memory를 관리하고 효율적으로 Page를 load하고 관리하기 위해서는 frame에 대한 효율적인 관리가 선행되어야 한다. 이를 위해서 Frame table을 구현하여야 한다. Frame table의 entry는 각 frame에 load된 page의 pointer를 포함하여 각 frame이 어떤 page를 갖는지 명시한다. 이때 특정 page의 pointer를 갖지 않는 entry가 존재하는 경우에는 단순히 새로운 page의 pointer를 해당 entry에 추가하면 된다. 그러나 모든 entry가 특정 page pointer를 갖는경우, eviction policy에 따라 정해진 page를 evict하고 할당한다. 
 
 ** 기존 pintos의 page table 구현은 `userprog/pagedir.c`에 구현되어 있다. 
 ** 기존 pintos의 page allocation/deallocation은 `threads/palloc.c`에 구현되어 있다.
 
 #### Limitations and Necessity
+***
 원본 pintos가 갖는 기존 구현에서는 free frame이 없는 경우 process가 원하는 동작을 할 수 없게 된다. 따라서 위에서 설명한 구조의 Frame table을 도입하므로써  free frame이 없는 경우에도 이미 할당된 page를 evict하고 여유 공간을 만들어냄으로써 새로운 page를 할당해 process의 동작을 유지할 수 있다. 
 
 #### Blueprint (proposal)
+***
 ##### Data structure
 `Frame table`은 하나의 table이므로 list로 구현한다. 이 list에는 frame table entry가 list entry로서 존재한다. 이때 frame table entry는 새로운 구조체를 선언하여 구현하되 해당 구조체는 virtual page의 frame address, page address영역을 구분하여 저장하고 동시에 `list_elem`형식의 필드를 통해 앞선 frame table이 구현된 list에 연결될 수 있도록 해야한다. 이때 이 frame table (list)는 global data이므로 lock으로 atomic하게 접근됨을 보장해야 한다. 
 
@@ -602,14 +605,52 @@ frame table을 관리하는 알고리즘은 다음의 함수에서 구현된다.
 
 
 ### 2. Lazy loading 
+***
 #### Basics
+***
 단순하게 Lazy loading이란 프로세스가 시작하는 과정에서 전체 메모리를 한번에 load하는 것이 아니라 필요할때만 lazy하게 load하는것을 말한다. 처음에 Stack setup부분만 load한 후 page fault가 일어나면 그때 해당 page를 load한다. 기존 원본 핀토스의 구현에서는 앞선 보고서의 내용과 같이 lazy loading이 구현되지 않았으며 한번에 프로세스가 시작할때 executable code전체가 메모리에 로드되는 방식으로 이루어진다. 
 
 #### Limitation and Necessity
+***
 이같은 기존 pintos의 구현은 불필요한 data도 memory에 load되어 memory공간이 낭비가 심한 문제를 갖는다. 또한 page fault를 처리하는 방법도 process termination, kernel panic으로 이루어져 효율적이지 못하다. 그에 반해 lazy loading은 메모리를 매우 효율적으로 사용할 수 있다는 장점을 갖는다. 
 
 #### Blueprint (proposal)
+***
+##### Data structure
+Lazy loading이 가능하다는 것은, 우리가 언제 어떤 page를 필요로 하고 필요로 하지 않는지 알 수 있다는 것을 의미하며 이는 곧 page개별에 대한 정보를 관리할 수 있다는 것을 뜻한다. 따라서 각 page의 정보를 저장하는 구조체가 필요하다. 이를 `pte`로 선언하고 이 자료구조가 갖는 정보는 아래 pseudo code 섹션에서 설명한다.
 
+
+
+`pte`: 해당 page가 어느 file의 일부인지, 해당 file에서의 offset, 쓰기 가능여부들에 대한 정보를 구조체로서 저장
+
+
+
+##### pseudo code or algorithm
+`pte`는 다음과 같은 pseudo code로 나타낼 수 있다.
+
+
+
+```
+struct pte{
+	struct file *f;
+	off_t pte_fo;
+	bool isWritable;
+};
+```
+
+
+
+`*f` : 해당 page가 속한 파일을 가르킨다.
+
+
+`pte_fo`: file offset
+
+
+`isWritable`: 해당 page의 쓰기 가능을 boolean으로 저장한다.
+
+
+
+lazy load는 page fault의 발생으로 부터 시작된다. page fault시 virtual memory에 존재하는 경우 physical memory로의 load를 시도한다. 이때 이미 load되어 physical memory에 있는 경우 return하고 그렇지 않은 경우 load 한다. 이 과정이 lazy loading이며 일종의 fault handler의 동작이라고 할 수 있다. 이때 page를 가져오는 출처는 page의 type에 의존하는데, `VM_ANON`의 경우 swap 영역에서 load하며 그 외에는 disk에서 file을 load한다. swap에 대해서는 추후에 더 서술한다. 이 과정에서 disk에서 load하는 함수와 swap하는 함수를 호출함으로써 physical memory로의 load를 수행한다. 
 
 
 ### 3. Supplemental page table
