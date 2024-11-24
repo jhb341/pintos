@@ -639,12 +639,38 @@ struct mmf{
 `mmf`구조체는 process마다 있으므로 `thread`구조체의 필드에 있어야 할것이다.
 
 MMF를 관리하는 알고리즘은 아래의 syscall 함수에 의해 구현된다.
-`sys_mmap`: file을 memory에 load gksek. 
-`sys_munmap`: `sys_mmap`에 의한 mapping을 해제한다. 
+`sys_mmap`: file을 memory에 load 한다. 특정 file을 mapping하고자 하는 request에 따라 mmf구조체를 할당하여 생성하고  `mmfList`에 추가하여 특정 프로세스가 접근하는 mmf에 대한 관리를 가능하게 한다.
+
+
+`sys_munmap`: `sys_mmap`에 의한 mapping을 해제한다. 전달받은 mmf를 해제해야하기때문에 iteration으로 `mmfList`를 돌면서 해당하는 mmf를 모두 할당 해제한다.
 
 
 ### 6. Swap table
 #### Basics
+virtual adress를 통한 adress translatioin은 process 관점에서 무한히 넓은 메모리 공간을 제공함으로써 싧제 physical memory보다 넓은 영역을 사용할 수 있도록 하는데, 이를 위해서 `page swap`이 구현되어야 한다. `page swap`이란 demand paging을 통해 `swap in`과 `swap out`을 수행하는것을 의미한다. 이때 page fault가 발생한 경우 disk의 특정 영역에서 page를 가져와 memory의 frame에 load하는 과정을 `swap in`이라고 하며 이러한 `swap in`을 수행하기 위하여 정해진 policy에 따라 frame에 load되어 있던 page를 evict하여 swap disk에 존재하게 해 free frame을 확보하는 과정을 `swap out`이라고 한다. 
 
+이때 `page swap`을 구현하는 과정에서 `swap disk`, swap disk 관리를 위한 `swap table`을 구현해야한다. 
+
+#### Limitation and Necessity
+현재 pintos에서는 page swap이 구현되지 않았다. 따라서 frame evict에 따른 swapping이 불가하므로 page allocation기능도 온전하게 구현되어 있지 않다. 
+
+#### Blueprint (proposal)
+##### Data structure
+page swap을 위해, 다음의 data structure가 구현되어야 한다.
+`swap_disk`
+`swap_table`
+`swapLock`:
+
+##### pseudo code or algorithm
+앞선 코드 구현과 마찬가지로, `swap out`시의 evict 되는 page를 선택하는 policy로 `Clock algoritm`을 따른다. 이는 frame table의 구현과 동일하게 한다. 또한 swap시의 과정의 synchronization을 위해 `swapLock`이 필요하다.
+
+`swap in` algorithm implementation as pseudo code
+```
+// swap in
+void do_swap_in ()
+{
+	
+}
+```
 
 ### 7. On process termination
