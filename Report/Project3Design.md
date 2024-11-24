@@ -656,6 +656,7 @@ Supplemental page table은 기존 page table을 보완하는 데이터 구조이
 ##### Data structure
 (추가)
 
+
 ##### pseudo code or algorithm
 (추가)
 
@@ -740,8 +741,8 @@ Swap 기능을 통해 virtual address를 사용한 address translation은 프로
 Swap 영역의 사용 여부를 추적하기 위해 bitmap을 사용하며, 이를 swap_table로 정의한다. 특정 bit가 1로 설정된 경우 해당 영역이 swap-out 가능하다는 것을 의미하도록 한다. 이 외에도 disk와 swap 작업의 동기화를 관리하기 위해 다음과 같은 구조체를 사용한다.
 
 (추가) 아래의 내용 맞는지 확인 필요 
-- swap_disk: swap 영역이 위치한 디스크를 관리.
-- swap_lock: swap 작업이 동기화되도록 보호.
+- `swap_disk`: swap 영역이 위치한 디스크를 관리.
+- `swap_lock`: swap 작업이 동기화되도록 보호.
 
 ```c
 struct swap_disk {
