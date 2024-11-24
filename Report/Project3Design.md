@@ -602,13 +602,49 @@ frame table을 관리하는 알고리즘은 다음의 함수에서 구현된다.
 
 
 ### 2. Lazy loading 
+#### Basics
+단순하게 Lazy loading이란 프로세스가 시작하는 과정에서 전체 메모리를 한번에 load하는 것이 아니라 필요할때만 lazy하게 load하는것을 말한다. 처음에 Stack setup부분만 load한 후 page fault가 일어나면 그때 해당 page를 load한다. 기존 원본 핀토스의 구현에서는 앞선 보고서의 내용과 같이 lazy loading이 구현되지 않았으며 한번에 프로세스가 시작할때 executable code전체가 메모리에 로드되는 방식으로 이루어진다. 
+
+#### Limitation and Necessity
+이같은 기존 pintos의 구현은 불필요한 data도 memory에 load되어 memory공간이 낭비가 심한 문제를 갖는다. 또한 page fault를 처리하는 방법도 process termination, kernel panic으로 이루어져 효율적이지 못하다. 그에 반해 lazy loading은 메모리를 매우 효율적으로 사용할 수 있다는 장점을 갖는다. 
+
+#### Blueprint (proposal)
+
+
 
 ### 3. Supplemental page table
 
 ### 4. Stack growth
 
 ### 5. File memory mapping
+#### Basics
+메모리의 frame은 file과 mapping될 수 있다. 예를 들어 executable code segment가 file로 존재하여 이 code를 memory로 load하는 경우가 있다. 이러한 `Memory Mapped File`을 올바르게 구현하기 위해 앞선 project2에서 구현하지 않은 `mmap`system call과 `munmap`system call을 구현하여야 한다. 
+
+#### Limitation and Necessity
+기존 pintos에서는 mmap syscall과 munmap syscall이 모두 구현돼있지 않아 memory mapped file을 구현할 수 없다. 따라서 disk에 있는 file의 data를 frame에 load하기 위해서는 이 시스템 콜을 구현하여야 한다. 
+
+#### Blueprint (proposal)
+##### Data structure
+Memory Mapped File(MMF라 함)은 여러개 존재할 수 있으므로 현재 관리하는 MMF가 몇개이고 무엇인지 list형태로 `mmfList`에 저장한다. 이 `mmfList`에는 list_elem형태로 각 개별 mmf가 연결된다. 그리고 이러한 각각의 MMF를 구분하는 data structure가 마련되어야 한다. 이를 하나의 `mmf`구조체로 선언하여 연결된 file의 포인터, 개별 고유 id, `mmfList`에 연결할 list_elem구조체 필드를 저장할 수 있다.
+
+##### pseudo code or algorithm
+위의 `mmf` data structure에 대한 pseudo code는 아래와 같다.
+```
+struct mmf{
+	int mmf_id;
+	struct file *f;
+	struct list_elem mmf_elem;
+};
+```
+`mmf`구조체는 process마다 있으므로 `thread`구조체의 필드에 있어야 할것이다.
+
+MMF를 관리하는 알고리즘은 아래의 syscall 함수에 의해 구현된다.
+`sys_mmap`: file을 memory에 load gksek. 
+`sys_munmap`: `sys_mmap`에 의한 mapping을 해제한다. 
+
 
 ### 6. Swap table
+#### Basics
+
 
 ### 7. On process termination
