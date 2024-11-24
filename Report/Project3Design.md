@@ -559,10 +559,16 @@ page_fault (struct intr_frame *f)
 
 ## Design Implementation 
 
-### 1. Supplement Page Table 
+### 1. Frame table
 
-### 2. Frame Table 
+### 2. Lazy loading 
 
-### 3. Swap Table 
+### 3. Supplemental page table
 
-### 4. Memory Mapped Files 
+### 4. Stack growth
+
+### 5. File memory mapping
+
+### 6. Swap table
+
+### 7. On process termination
