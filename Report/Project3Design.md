@@ -276,8 +276,7 @@ install_page (void *upage, void *kpage, bool writable)
 }
 ```
 
-(추가)
-stack -> 설명 추가 필요 
+이번 프로젝트의 과제 중 하나로 growing stack을 구현해야 하기 때문에, 처음 stack이 설정되는 함수에 대해 설명할 것이다. 아래의 setup_stack 함수를 보면, 먼저 위에서 설명한 palloc 함수를 이용해 빈 페이지를 할당하고 0으로 초기화한다. 그리고 install_page를 이용해 가상 주소와 물리적 주소를 매핑한다. 마지막으로, 스택 포인터인 esp를 stack의 최상단인 PHYS_BASE로 설정한다다.
 
 ```
 static bool
@@ -379,10 +378,7 @@ lookup_page (uint32_t *pd, const void *vaddr, bool create)
 
 `pagedir_activate` 함수는 앞서 생성된 페이지 디렉토리(`page directory`)를 활성화하는 역할을 한다. 
 
-만약 인자로 전달받은 페이지 디렉토리가 비어있거나(NULL인 경우), 해당 디렉토리가 유효하지 않다면, `init_page_dir` 함수를 호출하여 초기 페이지 디렉토리 형태로 활성화한다.
-
-(추가)
-"asm volatile ("movl %0, %%cr3" : : "r" (vtop (pd)) : "memory");" 부분 설명
+만약 인자로 전달받은 페이지 디렉토리가 비어있거나(NULL인 경우), 해당 디렉토리가 유효하지 않다면, `init_page_dir` 함수를 호출하여 초기 페이지 디렉토리 형태로 활성화한다. 그리고 어셈블리 코드를 사용해 physical memory 주소를 virtual memory 에 mapping 해준다. 
 
 ```
 void
@@ -603,9 +599,38 @@ Frame table 관리에는 Clock Algorithm을 기반으로 한 eviction policy를 
 
 #### Basics
 
-Lazy loading은 access 요청이 올 때마다 필요한 page data를 memory에 저장하는 것을 말한다. 기존의 PintOS는 page의 모든 executable이 memory에 load되는 방식을 사용한다.
-(추가)  
-처음에 Stack setup 부분만 load한 후 page fault가 발생하면 해당 page를 load한다. -> 어디?? (추가) `load_segment` 부분인 것 같은데, 이게 set up stack인가? 조교님 코드 확인 필요!!  
+Lazy loading은 access 요청이 올 때마다 필요한 page data를 memory에 저장하는 것을 말한다. 기존의 PintOS는 page의 모든 executable이 memory에 load되는 방식을 사용한다. 아래의 load_segment 를 보면 while loop 를 통해서 해당 세그먼트의 모든 데이터가 페이지 단위로 메모리에 load 되는 것을 볼 수 있다. 그리고 install_page 를 통해 user space 의 virtual address upage 와 kernel 에서 할당한 physical page kpage 를 매핑해준다. 
+
+```
+static bool
+load_segment (struct file *file, off_t ofs, uint8_t *upage,
+              uint32_t read_bytes, uint32_t zero_bytes, bool writable) 
+{
+...
+
+  file_seek (file, ofs);
+  while (read_bytes > 0 || zero_bytes > 0) 
+    {
+	...
+      /* Load this page. */
+      if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
+        {
+          palloc_free_page (kpage);
+          return false; 
+        }
+      memset (kpage + page_read_bytes, 0, page_zero_bytes);
+
+      /* Add the page to the process's address space. */
+      if (!install_page (upage, kpage, writable)) 
+        {
+          palloc_free_page (kpage);
+          return false; 
+        }
+	...
+    }
+  return true;
+}
+```
 
 #### Limitation and Necessity
 
@@ -617,7 +642,7 @@ Lazy loading은 access 요청이 올 때마다 필요한 page data를 memory에 
 
 Lazy loading이 가능하다는 것은 언제 어떤 page가 필요한지 관리할 수 있음을 의미하며, 이는 각 page의 정보를 추적할 수 있는 데이터 구조가 필요함을 뜻한다. 각 page의 정보를 저장하는 구조체는 아래와 같다.  
 
-```c
+```
 struct page_table {
     struct file *f;       // 해당 page가 속한 파일
     off_t pte_fo;         // 파일 offset
@@ -642,13 +667,16 @@ Lazy loading은 page fault 발생 시 시작된다. page fault가 발생했을 �
 Supplemental page table은 기존 page table을 보완하는 데이터 구조로서 virtual memory의 정보를 관리할 수 있도록 한다. 따라서 virtual memory의 `VA`(virtual adrress)에 해당하는 정보를 하나의 구조체로 묶어 entry `spte`를 구성하고 이러한 entry를 `spt`(supplemental page table)에서 관리할 수 있도록 한다. 
 
 #### Limitation and Necessity
-pintos의 `pte` format은 다음과 같다.
+
+original pintos의 `pte` format은 다음과 같다.
+
 ```
       31                                   12 11 9      6 5     2 1 0
      +---------------------------------------+----+----+-+-+---+-+-+-+
      |           Physical Address            | AVL|    |D|A|   |U|W|P|
      +---------------------------------------+----+----+-+-+---+-+-+-+
 ```
+
 현재 구현된 Page Table은 `availability`(AVL), `present`(P), `read/write`(W), `user/supervisor`(U), `accessed`(A), `dirty`(D)의 정보를 0~11bit에 저장한다. 그러나 lazy loading과 같은 기능을 지원하고 page fault를 처리하기 위해서는 추가적인 정보를 포함할 필요가 있다. 현재 pintos는 virtual memory를 관리할 수 있는 table이 함수가 없므로 지정된 virtual memory를 spt를 통해 관리할 수 있도록 한다.
 
 #### Blueprint (proposal)
@@ -662,7 +690,7 @@ pintos의 `pte` format은 다음과 같다.
 - `srcType`: file의 source가 binary인지, mapping file인지, swap disk인지 구분한다.
 - `isWritable`: 해당 VA이 writable하면 1, otherwise 0
 
-그러나 제공된 VA는 매우 많기 때문에 이러한 개별 VA에 대응되는 spte를 list로 관리하면 비효율적이다. 따라서 우리는 pintos에서 이미 구현되어 제공되는 `hash table`을 이용해 spt를 hash table로 구현하기로 한다. 따라서 `struct **spte**`는 아래의 필드도 포함하여야 한다.
+그러나 제공된 VA는 매우 많기 때문에 이러한 개별 VA에 대응되는 spte를 list로 관리하면 비효율적이다. 따라서 우리는 pintos에서 이미 구현되어 제공되는 `hash table`을 이용해 spt를 hash table로 구현하기로 한다. 따라서 `struct spte`는 아래의 필드도 포함하여야 한다.
 
 - `spte_hashElem`: spte의 hash table element
 
@@ -672,11 +700,9 @@ spt는 아래와 같이 thread의 필드로 선언한다.
 struct thread{
 /* thread.h의 thread 구조체 선언부 */
 	struct hash spt;
-/* 후략 */
+...
 };
 ```
-
-
 
 hash algorithm을 이용하나, pintos에 미리 구현된 hash table을 사용하며 아래의 함수들로 spt를 관리한다. 
 - `get_spte_key`: spte의 hash key를 반환한다.
@@ -764,11 +790,11 @@ Swap 기능을 통해 virtual address를 사용한 address translation은 프로
 
 Swap 영역의 사용 여부를 추적하기 위해 bitmap을 사용하며, 이를 swap_table로 정의한다. 특정 bit가 1로 설정된 경우 해당 영역이 swap-out 가능하다는 것을 의미하도록 한다. 이 외에도 disk와 swap 작업의 동기화를 관리하기 위해 다음과 같은 구조체를 사용한다.
 
-(추가) 아래의 내용 맞는지 확인 필요 
+아래의 내용 맞는지 확인 필요 
 - `swap_disk`: swap 영역이 위치한 디스크를 관리.
 - `swap_lock`: swap 작업이 동기화되도록 보호.
 
-```c
+```
 struct swap_disk {
     struct block *disk;      // Disk block 포인터
     size_t size;             // Swap 영역 크기
