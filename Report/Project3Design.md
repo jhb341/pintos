@@ -631,34 +631,58 @@ struct page_table {
 
 Lazy loading은 page fault 발생 시 시작된다. page fault가 발생했을 때, fault가 난 가상 메모리 주소가 물리 메모리에 이미 load되어 있다면 그대로 반환한다. 그렇지 않은 경우 해당 페이지를 physical memory에 load한다. 이 과정이 lazy loading이며, 일종의 fault handler이다.  
 
-페이지 데이터를 가져오는 출처는 page의 type에 따라 다르다. `VM_ANON` 타입인 경우 swap 영역에서 데이터를 가져오고, 그 외의 경우 disk에서 file을 load한다. swap 영역에서의 동작에 대해서는 6번에서 자세히 설명하였다. 이 과정은 disk에서 데이터를 읽어오는 함수와 swap하는 함수를 호출하여 physical memory로의 load를 수행한다.  
+페이지 데이터를 가져오는 출처는 page의 type에 따라 다르다. 예를들어 일부 경우는 swap 영역에서 데이터를 가져오고, 그 외의 경우 disk에서 file을 load한다. swap 영역에서의 동작에 대해서는 6번에서 자세히 설명하였다. 이 과정은 disk에서 데이터를 읽어오는 함수와 swap하는 함수를 호출하여 physical memory로의 load를 수행한다.  
 
 - `load_page_from_disk`: disk에서 file 데이터를 load하는 함수  
 - `swap_page`: swap 영역에서 데이터를 가져오는 함수 (6번에서 추가 설명)  
 
-(추가)  
-VM_ANON? 기존 PintOS에는 없는 것 같은데 설명 필요
-
-
 ### 3. Supplemental page table
 
 #### Basics
-
-Supplemental page table은 기존 page table을 보완하는 데이터 구조이다. 이는 virtual memory의 정보를 관리할 수 있도록 page table에 추가적인 정보를 더하여 하나의 entry로 구성된다. 따라서 supplemental page table (`spt`라고 함)은 page table과 별개로 구분되며 supplemental page table entry (`spte`)라는 구조체를 갖는다. spt와 spte는 본 과제에서 새로 선언한 후 구현한다.
+Supplemental page table은 기존 page table을 보완하는 데이터 구조로서 virtual memory의 정보를 관리할 수 있도록 한다. 따라서 virtual memory의 `VA`(virtual adrress)에 해당하는 정보를 하나의 구조체로 묶어 entry `spte`를 구성하고 이러한 entry를 `spt`(supplemental page table)에서 관리할 수 있도록 한다. 
 
 #### Limitation and Necessity
-
-(추가)  
-현재 구현된 Page Table은 `availability`, `present`, `read/write`, `user/supervisor`, `accessed`, `dirty`의 정보만을 담는다.
-그러나 lazy loading과 같은 기능을 지원하고 page fault를 처리하기 위해서는 현재의 정보만으로는 부족하며, 추가적인 ㅇ정보를 포함할 필요가 있다.  
+pintos의 `pte` format은 다음과 같다.
+```
+      31                                   12 11 9      6 5     2 1 0
+     +---------------------------------------+----+----+-+-+---+-+-+-+
+     |           Physical Address            | AVL|    |D|A|   |U|W|P|
+     +---------------------------------------+----+----+-+-+---+-+-+-+
+```
+현재 구현된 Page Table은 `availability`(AVL), `present`(P), `read/write`(W), `user/supervisor`(U), `accessed`(A), `dirty`(D)의 정보를 0~11bit에 저장한다. 그러나 lazy loading과 같은 기능을 지원하고 page fault를 처리하기 위해서는 추가적인 정보를 포함할 필요가 있다. 현재 pintos는 virtual memory를 관리할 수 있는 table이 함수가 없므로 지정된 virtual memory를 spt를 통해 관리할 수 있도록 한다.
 
 #### Blueprint (proposal)
 ##### Data structure
-(추가)
+`spt`의 entry `spte`는 특정 virtual memory의 정보를 갖기 때문에 정해진 VA에 대한 다음과 같은 정보를 가져야 한다. 따라서 아래 요소들은 `spte` 구조체의 필드로 존재한다.
 
+- `va_vpn`: Virtual Page Number
+- `va_offset`: Offset
+- `isLoad`: physical memory에 load시 1, otherwise 0
+- `file`: mapping된 file의 pointer
+- `srcType`: file의 source가 binary인지, mapping file인지, swap disk인지 구분한다.
+- `isWritable`: 해당 VA이 writable하면 1, otherwise 0
+
+그러나 제공된 VA는 매우 많기 때문에 이러한 개별 VA에 대응되는 spte를 list로 관리하면 비효율적이다. 따라서 우리는 pintos에서 이미 구현되어 제공되는 `hash table`을 이용해 spt를 hash table로 구현하기로 한다. 따라서 `struct **spte**`는 아래의 필드도 포함하여야 한다.
+
+- `spte_hashElem`: spte의 hash table element
 
 ##### pseudo code or algorithm
-(추가)
+spt는 아래와 같이 thread의 필드로 선언한다.
+```
+struct thread{
+/* thread.h의 thread 구조체 선언부 */
+	struct hash spt;
+/* 후략 */
+};
+```
+
+
+
+hash algorithm을 이용하나, pintos에 미리 구현된 hash table을 사용하며 아래의 함수들로 spt를 관리한다. 
+- `get_spte_key`: spte의 hash key를 반환한다.
+- `get_spte`: spte의 evict등을 위해 spt에서 spte를 return한다.
+- `init_spt`: `hash_init`을 이용해 spt를 초기화한다.
+- `get_new_spte`: malloc을 이용해 새로운 frame을 할당 후 spt에 `has_insert`로 삽입하도록 한다.
 
 
 ### 4. Stack growth
