@@ -33,7 +33,7 @@ Frame은 physical frame 또는 page frame을 의미하며, physical memory의 �
 이때 frame size와 page size가 같으므로 Pintos에서는 page를 frame과 mapping하여 해당 memory에 접근할 수 있도록 구현되어 있다.
 
 **3. Page Tables**  
-Page table은 앞서 설명한 page와 frame 간의 mapping 과정에서 사용되는 data structure이다. 이후 설명할 `pagedir.c` 코드에서 상세히 다루겠지만, 간단히 설명하자면, page table은 page number를 frame number로 mapping하며, offset은 page와 frame에서 동일한 값을 갖도록 구현되어 있다. 이를통해 VA를 PA로 번역(대응)할 수 있다.
+Page table은 앞서 설명한 page와 frame 간의 mapping 과정에서 사용되는 data structure이다. 이후 설명할 `pagedir.c` 코드에서 상세히 다루겠지만, 간단히 설명하자면, page table은 page number를 frame number로 mapping하며, offset은 page와 frame에서 동일한 값을 갖도록 구현되어 있다. 이를통해 VA를 PA로 translate 할 수 있다.
 
 ```
 	
@@ -53,7 +53,7 @@ Swap slot은 disk의 swap partition에서 page size만큼의 연속적인 영역
 
 위와 같이, 프로젝트 3에서 다루는 virtual memory의 핵심 개념인 Page, Frame, Page Table, 그리고 Swap Slot에 대해 설명하였다. 아래에서는 이 개념들을 기반으로 한 알고리즘 및 구조체 구현 방식을 다룰 것이다.
 
-먼저, page를 할당할 때 사용되는 주요 함수들에 대해 알아본다. 앞서 설명한 page와 frame은 모두 page-size 단위로 메모리가 할당되며, 이 과정에서 palloc 함수가 사용된다. Pintos의 시작점인 `init.c` 코드의 `main` 함수를 살펴보면, `palloc_init` 함수를 통해 전체 free memory를 계산한 후, 이를 user memory와 kernel memory로 나누는 것을 확인할 수 있다. 이후, 각각의 메모리는 `init_pool` 함수를 통해 초기화된다. 이 초기화 과정에서 사용자와 커널 메모리는 별도의 메모리 풀(pool)로 관리된다. 
+먼저, page를 할당할 때 사용되는 주요 함수들에 대해 알아본다. 앞서 설명한 page와 frame은 모두 page-size 단위로 메모리가 할당되며, 이 과정에서 palloc 함수가 사용된다. Pintos의 시작점인 `init.c` 코드의 `main` 함수를 살펴보면, `palloc_init` 함수를 통해 전체 free memory를 계산한 후, 이를 user memory와 kernel memory로 나누는 것을 확인할 수 있다. 이후, 각각의 메모리는 `init_pool` 함수를 통해 초기화된다. 이 초기화 과정에서 사용자와 커널 메모리는 별도의 memory pool로 관리된다. 
 
 ```
 main (void)
@@ -108,7 +108,7 @@ init_pool (struct pool *p, void *base, size_t page_cnt, const char *name)
 
 다음으로 `palloc.c`의 다른 함수들을 살펴보았다. 먼저, `palloc_get_page` 함수는 하나의 페이지를 할당하는 함수로, 내부적으로 `palloc_get_multiple()` 함수를 호출한다. 이때, 1을 인자로 넘겨 하나의 페이지만 할당되도록 한다. 
 
-`palloc_get_multiple` 함수에서는 먼저 인자로 전달받은 `flag` 값이 `PAL_USER`인지 확인한다. `PAL_USER`인 경우 사용자 메모리 풀에서 메모리를 할당하도록 `pool` 포인터를 설정하고, 그렇지 않으면 커널 메모리 풀에서 메모리를 할당하도록 설정한다. 이후, `lock`을 사용해 원자적(atomic)으로 `bitmap_scan_and_flip` 함수를 호출하여, `page_cnt`만큼 연속적으로 비어 있는 페이지를 검색하고 이를 `used` 상태로 설정한다.
+`palloc_get_multiple` 함수에서는 먼저 인자로 전달받은 `flag` 값이 `PAL_USER`인지 확인한다. `PAL_USER`인 경우 사용자 메모리 풀에서 메모리를 할당하도록 `pool` 포인터를 설정하고, 그렇지 않으면 커널 메모리 풀에서 메모리를 할당하도록 설정한다. 이후, `lock`을 사용해 atomic 하게 `bitmap_scan_and_flip` 함수를 호출하여, `page_cnt`만큼 연속적으로 비어 있는 페이지를 검색하고 이를 `used` 상태로 설정한다.
 
 할당 가능한 페이지가 존재할 경우, 해당 페이지의 첫 번째 인덱스를 반환하며, 페이지가 존재하지 않으면 `BITMAP_ERROR`를 반환하여 에러를 처리한다. `lock`을 해제한 후, 반환받은 인덱스를 이용해 실제 할당된 메모리의 시작 주소를 계산한다. 이 계산은 현재 메모리 풀의 시작 주소에 `(페이지 크기 * 인덱스)`를 더하는 방식으로 이루어진다.
 
@@ -155,7 +155,7 @@ palloc_get_multiple (enum palloc_flags flags, size_t page_cnt)
 }
 ```
 
-`palloc_free_page`는 하나의 페이지 메모리를 해제(release)하는 함수이다. 이와 유사하게 `palloc_free_multiple` 함수를 호출하여 여러 페이지를 해제할 수 있다. `palloc_free_multiple` 함수에서는 먼저 `page_from_pool` 함수를 사용해 해당 페이지(`page`)가 `kernel`에 속하는지, 혹은 `user`에 속하는지 확인한 뒤, 적절한 `pool` 포인터에 저장한다. 이후, 메모리 주소를 `pg_no` 함수를 통해 페이지 단위로 변환하여 페이지 번호를 계산한다. 이 계산 과정은, 현재 페이지의 메모리 주소에서 메모리 풀(pool)의 시작 주소를 빼주는 방식으로 이루어진다. 마지막으로, `bitmap_all` 함수를 통해 해당 페이지가 현재 `used` 상태인지 확인한 뒤, `bitmap_set_multiple` 함수를 사용하여 해제하려는 페이지를 `unused` 상태로 변경한다.
+`palloc_free_page`는 하나의 페이지 메모리를 release하는 함수이다. 위와 유사하게 `palloc_free_multiple` 함수를 호출하여 여러 페이지를 해제할 수 있다. `palloc_free_multiple` 함수에서는 먼저 `page_from_pool` 함수를 사용해 해당 페이지(`page`)가 `kernel`에 속하는지, 혹은 `user`에 속하는지 확인한 뒤, 적절한 `pool` 포인터에 저장한다. 이후, 메모리 주소를 `pg_no` 함수를 통해 페이지 단위로 변환하여 페이지 번호를 계산한다. 이 계산 과정은, 현재 페이지의 메모리 주소에서 메모리 풀(pool)의 시작 주소를 빼주는 방식으로 이루어진다. 마지막으로, `bitmap_all` 함수를 통해 해당 페이지가 현재 `used` 상태인지 확인한 뒤, `bitmap_set_multiple` 함수를 사용하여 해제하려는 페이지를 `unused` 상태로 변경한다.
 
 ```
 void
@@ -192,9 +192,9 @@ palloc_free_multiple (void *pages, size_t page_cnt)
 }
 ```
 
-`page_from_pool` 함수는 앞서 설명한 `palloc_free_multiple` 함수에서 사용되며, 전달받은 페이지가 사용자 메모리 풀(`user memory pool`)에 속하는지 또는 커널 메모리 풀(`kernel memory pool`)에 속하는지를 판별하여 반환하는 함수이다. 
+`page_from_pool` 함수는 앞서 설명한 `palloc_free_multiple` 함수에서 사용되며, 전달받은 페이지가 `user memory pool`에 속하는지 또는 `kernel memory pool`에 속하는지를 판별하여 반환하는 함수이다. 
 
-이 함수는 인수로 전달받은 페이지(`page`)의 주소가 해당 메모리 풀의 시작 페이지 주소보다 크고, 마지막 페이지 주소보다 작은지를 확인한 뒤, 결과를 `boolean` 값으로 반환한다.
+이 함수는 인수로 전달받은 `page`의 주소가 해당 메모리 풀의 시작 페이지 주소보다 크고, 마지막 페이지 주소보다 작은지를 확인한 뒤, 결과를 `boolean` 값으로 반환한다.
 
 ```
 static bool
@@ -298,7 +298,7 @@ setup_stack (void **esp)
 }
 ```
 
-다음으로, 위에서 자주 언급된 페이지 디렉토리(`page directory`)와 관련된 함수들에 대해 살펴보았다. 페이지 디렉토리는 이전 프로젝트 2에서 다룬 개념으로, 가상 메모리 공간(`virtual memory space`)을 물리 메모리 공간(`physical memory space`)에 매핑하기 위해 페이지 테이블(`page table`)을 관리하는 역할을 한다. 
+다음으로, 위에서 자주 언급된 `page directory`와 관련된 함수들에 대해 살펴보았다. 페이지 디렉토리는 이전 프로젝트 2에서 다룬 개념으로, `virtual memory space`을 `physical memory space`에 매핑하기 위해 `page table`을 관리하는 역할을 한다. 
 
 먼저, `pagedir_create` 함수는 새로운 페이지 디렉토리를 생성하는 함수이다. 이 함수는 `memcpy`를 사용해 `init_page_dir`의 `PGSIZE` 크기 데이터를 새로 생성된 `pd`에 복사한 뒤, 생성된 `pd`를 반환한다.
 
@@ -313,7 +313,7 @@ pagedir_create (void)
 }
 ```
 
-`pagedir_destroy` 함수는 지정된 페이지 디렉토리(`page directory`)에 포함된 모든 리소스를 해제(`free`)하는 역할을 한다. 이 함수는 `for` 루프를 사용해 페이지 디렉토리 내부의 각 엔트리(entry)를 순회하면서, 먼저 해당 페이지 테이블의 주소를 가져온다. 이후, 또 다른 `for` 루프를 통해 페이지 테이블의 각 엔트리를 순회하며, 각 엔트리를 `palloc_free_page`를 사용해 해제한다. 모든 엔트리를 해제한 후, 페이지 테이블의 모든 엔트리를 순회가 완료되면 마지막으로 해당 페이지 디렉토리 자체를 해제한다.
+`pagedir_destroy` 함수는 지정된 `page directory`에 포함된 모든 리소스를 해제(`free`)하는 역할을 한다. 이 함수는 `for` 루프를 사용해 페이지 디렉토리 내부의 각 entry를 순회하면서, 먼저 해당 페이지 테이블의 주소를 가져온다. 이후, 또 다른 `for` 루프를 통해 페이지 테이블의 각 엔트리를 순회하며, 각 엔트리를 `palloc_free_page`를 사용해 해제한다. 모든 엔트리를 해제한 후, 페이지 테이블의 모든 엔트리를 순회가 완료되면 마지막으로 해당 페이지 디렉토리 자체를 해제한다.
 
 ```
 void
@@ -376,7 +376,7 @@ lookup_page (uint32_t *pd, const void *vaddr, bool create)
 }
 ```
 
-`pagedir_activate` 함수는 앞서 생성된 페이지 디렉토리(`page directory`)를 활성화하는 역할을 한다. 
+`pagedir_activate` 함수는 앞서 생성된 `page directory`를 활성화하는 역할을 한다. 
 
 만약 인자로 전달받은 페이지 디렉토리가 비어있거나(NULL인 경우), 해당 디렉토리가 유효하지 않다면, `init_page_dir` 함수를 호출하여 초기 페이지 디렉토리 형태로 활성화한다. 그리고 어셈블리 코드를 사용해 physical memory 주소를 virtual memory 에 mapping 해준다. 
 
@@ -396,7 +396,7 @@ pagedir_activate (uint32_t *pd)
 }
 ```
 
-다음으로, `pagedir_set_page` 함수는 매핑을 수행하는 함수로, 몇 가지 조건을 확인한 후 매핑을 진행한다. 먼저, `upage`(가상 주소)가 반드시 페이지의 시작을 가리켜야 한다. 또한, `kpage`(물리 주소) 역시 페이지의 시작 주소여야 한다. 그다음으로, `upage`는 사용자 메모리 풀(user memory pool)에 속해야 하며, `kpage`는 물리 메모리 영역 내에 있어야 한다. 마지막으로, 페이지 디렉토리가 `init_page_dir`에 매핑되지 않도록 해야 하는데, 이는 사용자 프로세스의 페이지 디렉토리만 접근할 수 있도록 하기 위함이다. 
+다음으로, `pagedir_set_page` 함수는 매핑을 수행하는 함수로, 몇 가지 조건을 확인한 후 매핑을 진행한다. 먼저, `upage`(가상 주소)가 반드시 페이지의 시작을 가리켜야 한다. 또한, `kpage`(물리 주소) 역시 페이지의 시작 주소여야 한다. 그다음으로, `upage`는 user memory pool 에 속해야 하며, `kpage`는 물리 메모리 영역 내에 있어야 한다. 마지막으로, 페이지 디렉토리가 `init_page_dir`에 매핑되지 않도록 해야 하는데, 이는 사용자 프로세스의 페이지 디렉토리만 접근할 수 있도록 하기 위함이다. 
 
 위의 조건들을 확인한 후, 앞서 설명한 `lookup_page` 함수를 이용해 PTE를 찾고, `pte_create_user` 함수를 사용해 `kpage`를 `upage`에 매핑한다. 이때 매핑의 성공 여부는 `boolean` 값으로 반환된다. 
 
@@ -425,7 +425,7 @@ pagedir_set_page (uint32_t *pd, void *upage, void *kpage, bool writable)
 }
 ```
 
-`pagedir_get_page` 함수는 `uaddr`에 매핑된 물리적 주소(physical address)를 반환하는 함수이다. 먼저, `lookup_page` 함수를 호출해 `uaddr`에 해당하는 PTE(Page Table Entry)를 찾고 이를 저장한다. 그런 다음, `pte_get_page` 함수를 사용해 해당 PTE에 매핑된 물리적 페이지(physical page)의 시작 주소를 가져온다. 마지막으로, `uaddr`의 오프셋(offset)을 이 물리적 페이지의 시작 주소에 더한 값을 반환하여, 최종적으로 물리적 주소를 계산해 반환한다. 
+`pagedir_get_page` 함수는 `uaddr`에 매핑된 physical address를 반환하는 함수이다. 먼저, `lookup_page` 함수를 호출해 `uaddr`에 해당하는 PTE(Page Table Entry)를 찾고 이를 저장한다. 그런 다음, `pte_get_page` 함수를 사용해 해당 PTE에 매핑된 physical page의 시작 주소를 가져온다. 마지막으로, `uaddr`의 오프셋(offset)을 이 physical page의 시작 주소에 더한 값을 반환하여, 최종적으로 physical page를 계산해 반환한다. 
 
 ```
 void *
@@ -463,7 +463,8 @@ pagedir_clear_page (uint32_t *pd, void *upage)
 }
 ```
 
-먼저, 네 개의 함수를 설명하기 전에 `dirty`와 `clean`의 차이에 대해 알아보았다다. 가상 주소가 `dirty`하다는 것은 해당 데이터가 변경되었음을 의미한다. 
+먼저, 네 개의 함수를 설명하기 전에 `dirty`에 대해 알아보았다다. 가상 주소가 `dirty`하다는 것은 해당 데이터가 변경되었음을 의미한다.
+
 `pagedir_is_dirty` 함수는 `lookup_page` 함수를 사용해 `vpage`에 해당하는 PTE(Page Table Entry)를 찾은 후, 해당 PTE가 수정된 적이 있는지 `PTE_D` 비트를 확인하여 결과를 `boolean` 값으로 반환한다.
 
 ```
@@ -522,7 +523,7 @@ pagedir_set_accessed (uint32_t *pd, const void *vpage, bool accessed)
 }
 ```
 
-지금까지 `palloc`, `stack`, 그리고 `page directory`에 대해 알아보았다. 이제는 페이지 폴트(page fault)가 발생했을 때 어떤 동작이 수행되는지 살펴보자. 아래의 `page_fault` 함수는 `kill` 함수를 호출해 페이지 폴트가 발생한 프로세스를 즉시 종료한다. 그러나 이번 과제에서는 프로세스를 바로 종료하지 않고, 디스크에서 적절한 페이지를 메모리에 로드하는 과정을 구현할 것이다. 이에 대한 자세한 내용은 아래 `design` 파트에서 설명할 예정이다.
+지금까지 `palloc`, `stack`, 그리고 `page directory`에 대해 알아보았다. 이제는 페이지 폴트(page fault)가 발생했을 때 어떤 동작이 수행되는지 살펴보자. 아래의 `page_fault` 함수는 `kill` 함수를 호출해 페이지 폴트가 발생한 프로세스를 즉시 종료한다. 그러나 이번 과제에서는 프로세스를 바로 종료하지 않고, 디스크에서 적절한 페이지를 메모리에 로드하는 과정을 구현할 것이다. 이에 대한 자세한 내용은 아래 `design Implementation` 파트에서 설명할 예정이다.
 
 ```
 static void
