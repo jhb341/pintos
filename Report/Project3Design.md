@@ -644,13 +644,13 @@ VM_ANON? 기존 PintOS에는 없는 것 같은데 설명 필요
 
 #### Basics
 
-Supplemental page table은 기존 page table을 보완하는 데이터 구조이다. 이는 virtual memory의 정보를 관리할 수 있도록 page table에 추가적인 정보를 더하여 하나의 entry로 구성된다.
+Supplemental page table은 기존 page table을 보완하는 데이터 구조이다. 이는 virtual memory의 정보를 관리할 수 있도록 page table에 추가적인 정보를 더하여 하나의 entry로 구성된다. 따라서 supplemental page table (`spt`라고 함)은 page table과 별개로 구분되며 supplemental page table entry (`spte`)라는 구조체를 갖는다. spt와 spte는 본 과제에서 새로 선언한 후 구현한다.
 
 #### Limitation and Necessity
 
 (추가)  
-현재 구현된 Page Table은 `present`, `read/write`, `user/supervisor`, `accessed`, `dirty`, `availability`의 정보만을 담는다. -> 맞는지 확인 후 수정 필요  
-그러나 lazy loading과 같은 기능을 지원하고 page fault를 처리하기 위해서는 현재의 정보만으로는 부족하며, 추가적인 정보를 포함할 필요가 있다.  
+현재 구현된 Page Table은 `availability`, `present`, `read/write`, `user/supervisor`, `accessed`, `dirty`의 정보만을 담는다.
+그러나 lazy loading과 같은 기능을 지원하고 page fault를 처리하기 위해서는 현재의 정보만으로는 부족하며, 추가적인 ㅇ정보를 포함할 필요가 있다.  
 
 #### Blueprint (proposal)
 ##### Data structure
