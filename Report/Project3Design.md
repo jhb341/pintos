@@ -6,7 +6,7 @@
 
 이번 프로젝트 3에서는 virtual memory를 다루며, 이를 이해하기 위해 memory와 storage와 관련된 네 가지 주요 개념에 대한 이해가 필요하다. Pintos 문서에서는 이 네 가지 개념을 우선적으로 설명하고 있으므로, 본 디자인 보고서에서도 해당 개념들을 먼저 다룬 후, 각 알고리즘과 구조체를 설명할 것이다.
 
-1. Page  
+**1. Page**  
 Page는 virtual page를 의미하며, 4,096(=2^12)바이트 크기의 연속적인 가상 메모리 영역이다. 32비트 가상 주소는 페이지 번호(page number)와 오프셋(offset) 두 부분으로 나뉜다. 따라서 한 페이지 내의 임의의 주소는 12bit의 offset주소로 가르킬 수 있다. 따라서 32bit Virtual Address(VA라 함)은 아래와 같은 구조를 갖는다.
 
 ```
@@ -19,7 +19,7 @@ Page는 virtual page를 의미하며, 4,096(=2^12)바이트 크기의 연속적�
 
 각 프로세스는 서로 다른 user virtual page를 가지며, kernel page는 모든 프로세스에서 동일하다. kernel process는 사용자 페이지와 커널 페이지 모두에 접근할 수 있는 반면, user process는 자신의 사용자 페이지에만 접근할 수 있다.
 
-2. Frames  
+**2. Frames**  
 Frame은 physical frame 또는 page frame을 의미하며, physical memory의 연속적인 영역을 나타낸다. Page와 유사하게, 32비트 physical address(PA라 함)는 프레임 번호(frame number)와 오프셋(offset)으로 나뉜다.
 
 ```
@@ -32,7 +32,7 @@ Frame은 physical frame 또는 page frame을 의미하며, physical memory의 �
 
 이때 frame size와 page size가 같으므로 Pintos에서는 page를 frame과 mapping하여 해당 memory에 접근할 수 있도록 구현되어 있다.
 
-3. Page Tables  
+**3. Page Tables**  
 Page table은 앞서 설명한 page와 frame 간의 mapping 과정에서 사용되는 data structure이다. 이후 설명할 `pagedir.c` 코드에서 상세히 다루겠지만, 간단히 설명하자면, page table은 page number를 frame number로 mapping하며, offset은 page와 frame에서 동일한 값을 갖도록 구현되어 있다. 이를통해 VA를 PA로 번역(대응)할 수 있다.
 
 ```
@@ -48,7 +48,7 @@ Page table은 앞서 설명한 page와 frame 간의 mapping 과정에서 사용�
                 \_______________________________________/
 ```
 
-5. Swap Slots  
+**4. Swap Slots**  
 Swap slot은 disk의 swap partition에서 page size만큼의 연속적인 영역을 의미한다. 
 
 위와 같이, 프로젝트 3에서 다루는 virtual memory의 핵심 개념인 Page, Frame, Page Table, 그리고 Swap Slot에 대해 설명하였다. 아래에서는 이 개념들을 기반으로 한 알고리즘 및 구조체 구현 방식을 다룰 것이다.
