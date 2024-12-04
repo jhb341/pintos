@@ -22,6 +22,7 @@
 #include "threads/palloc.h"
 #include "threads/pte.h"
 #include "threads/thread.h"
+#include "vm/FrameTable.h" 
 #ifdef USERPROG
 #include "userprog/process.h"
 #include "userprog/exception.h"
@@ -89,6 +90,9 @@ main (void)
      then enable console locking. */
   thread_init ();
   console_init ();  
+
+  // virtual memory revised 
+  frame_table_init(); 
 
   /* Greet user. */
   printf ("Pintos booting with %'"PRIu32" kB RAM...\n",

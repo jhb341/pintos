@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "frametable.h": "c",
+        "thread.h": "c"
+    }
+}
