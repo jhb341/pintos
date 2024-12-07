@@ -604,6 +604,7 @@ setup_stack (void **esp)
   uint8_t *kpage;
   bool success = false;
 
+  // falloc 으로 수정하고 success 일 때, spte 에도 추가해줘야 함 
   kpage = palloc_get_page (PAL_USER | PAL_ZERO);
   if (kpage != NULL) 
     {
