@@ -5,6 +5,7 @@
 #include "threads/thread.h"
 #include "../lib/kernel/hash.h"
 #include "threads/vaddr.h"
+#include "threads/palloc.h"
 
 
 /*

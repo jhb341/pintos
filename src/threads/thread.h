@@ -118,6 +118,7 @@ struct thread
     int fileCnt;
 #endif
    struct hash supp_pt; 
+   void* esp; //stack pointer for stack growth 
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */

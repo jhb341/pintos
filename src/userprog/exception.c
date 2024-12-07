@@ -5,6 +5,7 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "vm/supplementPageTable.h"
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
@@ -156,10 +157,43 @@ page_fault (struct intr_frame *f)
 
   // lazy loading 
   struct thread* t = thread_current();
+  if (t == NULL) {
+      sys_exit(-1); // 잘못된 스레드 접근
+   }
   void* upage;  // = 뭔가 physical page 할당하는 함수가 필요해보임 
+  /*
+  Round down to nearest page boundary.
+      static inline void *pg_round_down (const void *va) {
+      return (void *) ((uintptr_t) va & ~PGMASK);
+      }
+  */
   if(load_page(t->supp_pt, upage)){
    return; 
   }
+
+  // stack growth 
+  void* esp; 
+  if (f == NULL || t == NULL) {
+      sys_exit(-1); // 잘못된 스레드나 프레임 접근 시 종료
+   }
+  if(user){// accessed by user
+      esp = f -> esp; 
+  }else{
+      esp = t -> esp; 
+  }
+
+  // 만약 grow 할 수 있으면 page_zero 로 spte 할당
+  // 근데 왜 esp 랑 t 에서 에러가 나지...????  
+  if (esp - 32 <= fault_addr && fault_addr < PHYS_BASE) {
+      // 스택 확장 처리
+      if (!get_spte(t->supp_pt, upage)) {
+         init_zero_spte(t->supp_pt, upage);
+      }
+   } else {
+      sys_exit(-1); // 잘못된 페이지 접근
+   }
+
+
 
   /* To implement virtual memory, delete the rest of the function
      body, and replace it with code that brings in the page to
