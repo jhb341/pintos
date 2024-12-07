@@ -196,74 +196,71 @@ get_spte(struct hash *supp_pt, void *physical_page){
 }
 
 
-bool
-lazy_loading (struct hash* supp_pt, void* physical_page){
-
-    struct supplementPageTableEntry* spte = get_spte(supp_pt, physical_page); 
-
-    if (spte == NULL){
-        sys_exit (-1);
-    }
-  
-    void* kernel_page = falloc_get_page(enum palloc_flags flags, physical_page); // 여기 flag 가 뭐가 되야하는지 모르겟음 
-    if (kernel_page == NULL){
-        sys_exit (-1);
+bool 
+lazy_loading(struct hash *supp_pt, void *physical_page) {
+    struct supplementPageTableEntry *spte = get_spte(supp_pt, physical_page);
+    if (spte == NULL) {
+        sys_exit(-1);
     }
 
-    bool hold_lock = supplementPageTableLock.holder == thread_current()? true: false; 
+    void *kernel_page = falloc_get_page(PAL_USER, physical_page);
+    if (kernel_page == NULL) {
+        sys_exit(-1);
+    }
 
-    switch (spte->current_status){
+    // 공유 자원을 보호하기 위해 락을 획득
+    lock_acquire(&supplementPageTableLock);
+
+    switch (spte->current_status) {
         case PAGE_ZERO:
-            //void *memset(void *s, int c, size_t n);
-            // s = 초기화 할 메모리의 시작 주소 
-            // c = 메모리 채울 값 
-            // n = 채울 바이트 수 
-            memset (kernel_page, 0, PGSIZE);
+            // 메모리를 0으로 초기화
+            memset(kernel_page, 0, PGSIZE);
             break;
+
         case PAGE_SWAP:
-            // swapping logic needs to be added 
+            // 스왑에서 데이터를 가져오는 로직 추가
+            swap_in(spte, kernel_page); // 스왑 처리 함수 호출
             break;
-        
+
         case PAGE_FILE:
-            if (!hold_lock)
-            lock_acquire (&supplementPageTableLock);
-            
-            // kernel page 에 파일 data 저장하기 
-            uint32_t bytes_read = file_read_at (spte->f, kernel_page, spte->bytesToRead, spte->ofs); 
-
-            if (bytes_read != spte -> bytesToRead) { // 파일 읽기 실패 시 
-            falloc_free_page (kernel_page);
-            lock_release (&supplementPageTableLock);
-            sys_exit (-1);
+            // 파일에서 데이터 읽기
+            uint32_t bytes_read = file_read_at(spte->f, kernel_page, spte->bytesToRead, spte->ofs);
+            if (bytes_read != spte->bytesToRead) {
+                falloc_free_page(kernel_page);
+                lock_release(&supplementPageTableLock);
+                sys_exit(-1);
             }
-            
-            void* starting_addr = (uint8_t*)kernel_page + spte->bytesToRead;
 
-            memset (starting_addr, 0, spte -> bytesToSetZero);
-            lock_release (&supplementPageTableLock);
-            
+            // 읽지 않은 영역을 0으로 초기화
+            void *starting_addr = (uint8_t *)kernel_page + spte->bytesToRead;
+            memset(starting_addr, 0, spte->bytesToSetZero);
             break;
 
         case PAGE_FRAME:
-            // 이미 로드된 페이지
+            // 이미 로드된 페이지 처리
             break;
+
         default:
-            sys_exit (-1);
-    }
-    
-    uint32_t* pagedir = thread_current ()->pagedir;
-
-    // src\userprog\pagedir.c
-    //bool pagedir_set_page (uint32_t *pd, void *upage, void *kpage, bool writable)
-
-    if (!pagedir_set_page (pagedir, physical_page, kernel_page, spte -> isWritable)){
-        falloc_free_page (kernel_page);
-        sys_exit (-1);
+            lock_release(&supplementPageTableLock);
+            sys_exit(-1);
     }
 
+    // 페이지 디렉터리 접근 보호
+    uint32_t *pagedir = thread_current()->pagedir;
+    if (!pagedir_set_page(pagedir, physical_page, kernel_page, spte->isWritable)) {
+        falloc_free_page(kernel_page);
+        lock_release(&supplementPageTableLock);
+        sys_exit(-1);
+    }
+
+    // SPTE 업데이트 (락으로 보호된 상태)
     spte->kernel_page = kernel_page;
     spte->current_status = PAGE_FRAME;
 
+    // 락 해제
+    lock_release(&supplementPageTableLock);
+
     return true;
 }
+
 

@@ -154,6 +154,13 @@ page_fault (struct intr_frame *f)
    sys_exit(-1);
   }
 
+  // lazy loading 
+  struct thread* t = thread_current();
+  void* upage;  // = 뭔가 physical page 할당하는 함수가 필요해보임 
+  if(load_page(t->supp_pt, upage)){
+   return; 
+  }
+
   /* To implement virtual memory, delete the rest of the function
      body, and replace it with code that brings in the page to
      which fault_addr refers. */

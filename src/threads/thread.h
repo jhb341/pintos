@@ -117,6 +117,7 @@ struct thread
     struct file *fileExec;
     int fileCnt;
 #endif
+   struct hash supp_pt; 
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
