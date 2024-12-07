@@ -16,7 +16,8 @@ frame_table_init() {
 
 
 // 프레임 테이블 엔트리 생성
-static struct frameTableEntry *create_frame_table_entry(void *kpage, void *upage) {
+static struct frameTableEntry*
+create_frame_table_entry(void *kpage, void *upage) {
 
     struct frameTableEntry *fte = (struct frameTableEntry *)malloc(sizeof(*fte));
 
@@ -35,7 +36,8 @@ static struct frameTableEntry *create_frame_table_entry(void *kpage, void *upage
 }
 
 // 페이지 프레임 할당 함수
-void *falloc_get_page(enum palloc_flags flags, void *upage) {
+void*
+falloc_get_page(enum palloc_flags flags, void *upage) {
 
     struct frameTableEntry *fte;
     void *kpage;
@@ -64,7 +66,8 @@ void *falloc_get_page(enum palloc_flags flags, void *upage) {
 }
 
 // 프레임 엔트리 제거
-void remove_frame_entry(struct frameTableEntry *fte) {
+void 
+remove_frame_entry(struct frameTableEntry *fte) {
     list_remove(&fte->frameTableList); // 프레임 테이블에서 제거
     palloc_free_page(fte->kernel_page); // 물리 페이지 반환
     pagedir_clear_page(fte->t->pagedir, fte->physical_page); // 페이지 매핑 제거 (아래 참고)
@@ -90,7 +93,8 @@ pagedir_clear_page (uint32_t *pd, void *upage)
 */
 
 // kpage 와 일치하는 프레임 테이블 entry 반환하는 함수 
-struct frameTableEntry *get_fte(void *kpage) {
+struct frameTableEntry*
+get_fte(void *kpage) {
     struct list_elem *e;
     for (e = list_begin(&frameTable); e != list_end(&frameTable); e = list_next(e)) {
         struct frameTableEntry *fte = list_entry(e, struct frameTableEntry, frameTableList);
@@ -101,7 +105,8 @@ struct frameTableEntry *get_fte(void *kpage) {
     return NULL;
 }
 
-void falloc_free_page(void *kpage) {
+void 
+falloc_free_page(void *kpage) {
     struct fte *e;
 
     lock_acquire(&frameTableLock); // 프레임 테이블 락 획득

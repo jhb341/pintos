@@ -15,6 +15,11 @@ struct frameTableEntry {
 }; 
 
 void frame_table_init();
+static struct frameTableEntry* create_frame_table_entry(void *kpage, void *upage); 
+void* falloc_get_page(enum palloc_flags flags, void *upage); 
+void remove_frame_entry(struct frameTableEntry *fte); 
+struct frameTableEntry* get_fte(void *kpage); 
+void falloc_free_page(void *kpage); 
 
 
 
