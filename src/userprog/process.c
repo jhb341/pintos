@@ -243,8 +243,10 @@ process_exit (void)
 
   int i;
 
-  for (i = 0; i < cur->mapid; i++)
+  for (i = 0; i < cur->mapid; i++){
     sys_munmap (i);
+  }
+
   
   destroy_spt (&cur->spt);
 
