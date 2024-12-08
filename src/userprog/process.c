@@ -595,7 +595,7 @@ setup_stack (void **esp)
       }
       else{
         //palloc_free_page (kpage);
-        falloc_freepage(kpage);
+        falloc_free_page(kpage);
       }
     }
   return success;

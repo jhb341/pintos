@@ -1,13 +1,15 @@
 #include "vm/page.h"
+#include "vm/swap.c"
 #include "threads/thread.h"
 #include "vm/frame.h"
+#include "vm/frame.c"
 #include <string.h>
 #include "threads/vaddr.h"
 
 static hash_hash_func spt_hash_func;
 static hash_less_func spt_less_func;
 static void page_destutcor (struct hash_elem *elem, void *aux);
-extern struct lock file_lock;
+extern struct lock FileLock;
 
 void
 init_spt (struct hash *spt)
@@ -113,7 +115,7 @@ load_page (struct hash *spt, void *upage)
   if (kpage == NULL)
     sys_exit (-1);
 
-  bool was_holding_lock = lock_held_by_current_thread (&file_lock);
+  bool was_holding_lock = lock_held_by_current_thread (&FileLock);
 
   switch (e->status)
   {
@@ -126,18 +128,18 @@ load_page (struct hash *spt, void *upage)
     break;
   case PAGE_FILE:
     if (!was_holding_lock)
-      lock_acquire (&file_lock);
+      lock_acquire (&FileLock);
     
     if (file_read_at (e->file, kpage, e->read_bytes, e->ofs) != e->read_bytes)
     {
       falloc_free_page (kpage);
-      lock_release (&file_lock);
+      lock_release (&FileLock);
       sys_exit (-1);
     }
     
     memset (kpage + e->read_bytes, 0, e->zero_bytes);
     if (!was_holding_lock)
-      lock_release (&file_lock);
+      lock_release (&FileLock);
 
     break;
 
