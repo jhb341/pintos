@@ -637,6 +637,9 @@ init_mmf (int id, struct file *file, void *upage)
   mmf->upage = upage;
 
   //off_t ofs;
+  /*
+  #include "filesys/off_t.h" 넣고 off_t로?
+  */
   uint64_t ofs;
 
   int size = file_length (file);
