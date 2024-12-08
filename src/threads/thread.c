@@ -225,6 +225,9 @@ thread_create (const char *name, int priority,
 
   init_spt(&t->spt);
 
+  list_init (&t->mmf_list);
+  t->mapid = 0;             
+
   /* Add to run queue. */
   thread_unblock (t);
 
