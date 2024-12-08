@@ -626,7 +626,7 @@ uint32_t thread_stack_ofs = offsetof (struct thread, stack);
 
 
 /* My new function implmentation for Project3 !! */
-/*
+
 struct mmf *
 init_mmf (int id, struct file *file, void *upage)
 {
@@ -636,7 +636,9 @@ init_mmf (int id, struct file *file, void *upage)
   mmf->file = file;
   mmf->upage = upage;
 
-  off_t ofs;
+  //off_t ofs;
+  uint64_t ofs;
+
   int size = file_length (file);
   struct hash *spt = &thread_current ()->spt;
 
@@ -655,7 +657,7 @@ init_mmf (int id, struct file *file, void *upage)
 
   return mmf;
 }
-*/
+
 
 
 struct mmf *
