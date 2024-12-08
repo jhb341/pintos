@@ -92,6 +92,12 @@ init_file_spte (struct hash *spt, void *_upage, struct file *_file, off_t _ofs, 
   return e;
 }
 
+/*
+    page의 lazy한 load를 구현함. 
+    즉, page fault시의 요청된 page를 선택적으로 load.
+    따라서 load_page는 pg fault handler에서 호출됨
+    ..
+*/
 bool
 load_page (struct hash *spt, void *upage)
 {
