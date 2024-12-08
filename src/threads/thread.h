@@ -29,6 +29,18 @@ typedef int tid_t;
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
 
+/* 
+   mmf에 대한 구조체 선언
+*/
+struct mmf 
+{
+   int id;
+   struct file* file;
+   struct list_elem mmf_list_elem;
+    
+   void *upage;
+};
+
 /* A kernel thread or user process.
 
    Each thread structure is stored in its own 4 kB page.  The
@@ -119,6 +131,9 @@ struct thread
 #endif
     struct hash spt;
     void *esp;
+
+    struct list mmf_list;
+    int mapid;
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
