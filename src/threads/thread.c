@@ -223,6 +223,8 @@ thread_create (const char *name, int priority,
   t->fileCnt = 2;
   //#endif
 
+  init_spt(&t->spt);
+
   /* Add to run queue. */
   thread_unblock (t);
 
