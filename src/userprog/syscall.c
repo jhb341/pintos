@@ -398,11 +398,11 @@ syscall_handler(struct intr_frame *f)
     sys_close(argv[0]);
     break;
   case SYS_MMAP:
-    getArgs(f->esp, &argv[0], 2);
+    getArgs(f->esp + 4, &argv[0], 2);
     f->eax = sys_mmap((int) argv[0], (void *) argv[1]);
     break;
   case SYS_MUNMAP:
-    getArgs(f->esp, &argv[0], 1);
+    getArgs(f->esp + 4, &argv[0], 1);
     sys_munmap((int) argv[0]);
     break;
   default:
@@ -413,3 +413,4 @@ syscall_handler(struct intr_frame *f)
   }
 
 }
+
