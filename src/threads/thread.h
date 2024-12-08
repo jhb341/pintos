@@ -29,6 +29,22 @@ typedef int tid_t;
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
 
+///////////////
+/*
+   mmf 구조체 하나는 file하나에 상응한다. 
+   파일 데이터와, 식별 정보(아이디), VA로 구성
+   즉, mmf자체를 하나의 파일로 간주한다. 
+*/
+struct mmf 
+  {
+    int id;                         /* mmf의 이름 */
+    struct file* file;              /* file pointer */   
+    struct list_elem mmf_list_elem; /* list에 걸어놓을 엘레멘트 */
+    void *upage;                    /* 어느 VA에 연결? */
+  };
+
+
+/////////////////
 /* A kernel thread or user process.
 
    Each thread structure is stored in its own 4 kB page.  The
@@ -117,8 +133,13 @@ struct thread
     struct file *fileExec;
     int fileCnt;
 #endif
+
+    /* for PRJC3 */
     struct hash spt;
     void *esp;
+
+    int mapid; /* 이 스레드가 얼마나 많은 mmf갖고 있나? */
+    struct list mmf_list; /* 그 리스트 */
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
@@ -161,5 +182,7 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+struct mmf *get_mmf (int mapid);
 
 #endif /* threads/thread.h */

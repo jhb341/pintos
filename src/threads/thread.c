@@ -223,7 +223,12 @@ thread_create (const char *name, int priority,
   t->fileCnt = 2;
   //#endif
 
+  // for prjc3!
   init_spt(&t->spt);
+
+  list_init (&t->mmf_list);
+  t->mapid = 0;
+
 
   /* Add to run queue. */
   thread_unblock (t);
@@ -618,3 +623,54 @@ allocate_tid (void)
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
+
+
+/* My new function implmentation for Project3 !! */
+/*
+struct mmf *
+init_mmf (int id, struct file *file, void *upage)
+{
+  struct mmf *mmf = (struct mmf *) malloc (sizeof *mmf);
+  
+  mmf->id = id;
+  mmf->file = file;
+  mmf->upage = upage;
+
+  off_t ofs;
+  int size = file_length (file);
+  struct hash *spt = &thread_current ()->spt;
+
+  for (ofs = 0; ofs < size; ofs += PGSIZE)
+    if (get_spte (spt, upage + ofs))
+      return NULL;
+
+  for (ofs = 0; ofs < size; ofs += PGSIZE)
+  {
+    uint32_t read_bytes = ofs + PGSIZE < size ? PGSIZE : size - ofs;
+    init_file_spte (spt, upage, file, ofs, read_bytes, PGSIZE - read_bytes, true);
+    upage += PGSIZE;
+  }
+
+  list_push_back (&thread_current ()->mmf_list, &mmf->mmf_list_elem);
+
+  return mmf;
+}
+*/
+
+
+struct mmf *
+get_mmf (int mapid)
+{
+  struct list *list = &thread_current ()->mmf_list;
+  struct list_elem *e;
+
+  for (e = list_begin (list); e != list_end (list); e = list_next (e))
+  {
+    struct mmf *f = list_entry (e, struct mmf, mmf_list_elem);
+
+    if (f->id == mapid)
+      return f;
+  }
+
+  return NULL;
+}
