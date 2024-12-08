@@ -241,10 +241,22 @@ process_exit (void)
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
-  for(int i = 2; i < cur->fileCnt; i++)
+  int i;
+
+  for (i = 0; i < cur->mapid; i++)
+    sys_munmap (i);
+  
+  destroy_spt (&cur->spt);
+
+  //file_close (cur->pcb->file_ex);
+  file_close(cur->fileExec);
+
+  //for (i = cur->pcb->fd_count - 1; i > 1; i--)
+  for(i = cur->fileCnt - 1; i > 1; i--)
   {
-    sys_close(i);
+    sys_close (i);
   }
+
 	
   // 이제 전부 해제
   palloc_free_page(cur->fileTable); // 스레드가 가지고 있던 테이블 해제

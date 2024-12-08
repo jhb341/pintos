@@ -14,6 +14,7 @@
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
+#include "filesys/off_t.h"
 
 /* Random value for struct thread's `magic' member.
    Used to detect stack overflow.  See the big comment at the top
@@ -636,11 +637,11 @@ init_mmf (int id, struct file *file, void *upage)
   mmf->file = file;
   mmf->upage = upage;
 
-  //off_t ofs;
+  off_t ofs;
   /*
   #include "filesys/off_t.h" 넣고 off_t로?
   */
-  uint64_t ofs;
+  //uint64_t ofs;
 
   int size = file_length (file);
   struct hash *spt = &thread_current ()->spt;

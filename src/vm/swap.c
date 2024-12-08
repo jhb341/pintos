@@ -3,7 +3,7 @@
 
 #define SECTOR_NUM (PGSIZE / BLOCK_SECTOR_SIZE)
 
-static struct bitmap *swap_valid_table;
+static struct bitmap *swap_valid_table; /* 디스크와 대응됨 */
 static struct block *swap_disk;
 static struct lock swap_lock;
 

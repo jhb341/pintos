@@ -38,6 +38,7 @@
 #include "filesys/fsutil.h"
 #endif
 
+
 /* Page directory with kernel mappings only. */
 uint32_t *init_page_dir;
 
@@ -127,6 +128,7 @@ main (void)
   filesys_init (format_filesys);
 #endif
 
+  init_swap_valid_table();
   frame_init();
   printf ("Boot complete.\n");
   
