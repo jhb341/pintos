@@ -251,12 +251,39 @@ void sys_close(int fd)
   file_close(f);
 	thread_current()->fileTable[fd] = NULL;
   */
+
+
+ /*
   struct file *f = (fd < thread_current()->fileCnt) ? thread_current()->fileTable[fd] : NULL;
 
   if (f != NULL) {
     file_close(f);
     thread_current()->fileTable[fd] = NULL;
   }
+  */
+  struct file *file;
+  struct thread *t = thread_current();
+  int i;
+
+  if(fd >= t->fileCnt || fd < 2){
+    sys_exit(-1);
+  }
+
+  file = t->fileTable[fd];
+  if(file == NULL){
+    return;
+  }
+
+  file_close(file);
+  t->fileTable[fd] = NULL;
+  for(i = fd; i < t->fileCnt; i++){
+    t->fileTable[i] = t->fileTable[i+1];
+  }
+  t->fileCnt--;
+
+
+
+
 }
 
 //prjc3, mmf
