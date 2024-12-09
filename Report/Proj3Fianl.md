@@ -387,7 +387,7 @@ setup_stack 함수에서 만약 install page 가 성공하면, init_frame_spte �
 
 디자인 레포트에서는 4 가지 status 에 대해서 생각하지 못하여 initiation 과정을 하나만 구상하였는데, 네 가지 다른 status 각각에 맞게 initiation 과정을 추가하였다. 그리고 hash 내부의 함수 사용이 미흡하여 supplemental page table 을 init 하고 delete 하는 함수 구현을 구상하지 못하였는데 supplemental page table entry 에 해당하는 함수를 구현하면서 추가해주었다. 
 
-(추가) 각 initiation 이랑 delete 함수가 어디서 사용되는지?? 
+(질문) 각 initiation 이랑 delete 함수가 어디서 사용되는지?? 
 
 
 ### 2. Lazy loading 
@@ -520,6 +520,18 @@ get_spte (struct hash *spt, void *upage)
 ### Implementation & Improvement from the previous design 
 
 ```
+struct thread
+  {
+  ...
+    void *esp;
+  ...
+  };
+```
+
+stack growth 를 위해서는 현재 가리키고 있는 stack pointer 위치를 알아야하기 때문에 thread 구조체에 esp 포인터를 추가해주었다. 
+(질문) 이거 새로 추가한거 맞나??
+
+```
 static void
 page_fault (struct intr_frame *f) 
 {
@@ -538,21 +550,12 @@ page_fault (struct intr_frame *f)
   ...
 ```
 
+stack growth 는 page fault 가 발생했을 때 실행된다. 먼저 pg_round_down 함수를 사용해 페이지 크기의 배수로 내림하여 해당 주소가 속한 페이지의 시작 주소를 upage 에 할당해준다. 그리고 esp 확장 가능한지 확인하기 위해서 if 문을 사용해 컨디션을 확인한 수, init_zero_spte 를 사용해 새로운 supplemental page table entry 를 생성한 후 supplemental page table에 추가해 주었다. 
+
+
 ### Difference from design report
 
-#### Blueprint (Proposal)
-
-##### Data Structure
-
-Stack grow 기능을 구현하기 위해 각 thread의 stack pointer(esp) 값을 추적해야 하므로, 기존 thread 구조체에 esp 포인터를 추가한다. 별도의 새로운 구조체를 선언하지는 않는다.
-
-##### Pseudo Code or Algorithm
-
-Page fault 발생 시 stack grow가 필요한 상황을 확인하고, 조건에 맞으면 stack을 확장하도록 구현한다. 이를 위해 다음과 같은 함수를 구현하거나 수정한다:
-
-- `is_stack_access(addr, esp)`: Page fault가 발생한 주소(addr)가 현재 thread의 esp와 충분히 가까운지 확인한다. 조건을 만족할 경우 stack grow를 허용한다.  
-- `grow_stack(fault_addr)`: Page fault가 발생한 주소를 기준으로 stack 영역을 확장한다. 이때, free page를 supplemental page table을 통해 할당받아 물리 메모리에 매핑한다.  
-- `page_fault`(기존 함수 수정) : Page fault가 발생했을 때 fault address를 확인하고, stack grow 조건을 만족하면 `grow_stack`을 호출하여 stack을 확장한다. 조건에 부합하지 않을 경우 기존 page fault 처리 방식을 유지한다.   
+기존의 디자인과 두가지 차별점이 생겼다. 먼저, stack grow 가 가능한지 확인하는 함수를 따로 구현하려고 하였으나 if 문을 사용해 간단히 확인이 가능할 것 같아 page fault 함수에서 실행하였다. 그리고 stack memory 를 확장해주는 함수는 supplemental page table 을 구현하는 과정에서 데이터를 zero 로 할당해주는 함수인 init_zero_spte를 사용하면 더 일관성있게 구현할 수 있을 것 같아 수정하였다. 
 
 
 ### 5. File memory mapping
