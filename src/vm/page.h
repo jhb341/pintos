@@ -38,14 +38,14 @@ struct spte
     int swap_id;
   };
 
-void init_spt (struct hash *);
-void destroy_spt (struct hash *);
-void init_spte (struct hash *, void *, void *);
-void init_zero_spte (struct hash *, void *);
-void init_frame_spte (struct hash *, void *, void *);
-struct spte *init_file_spte (struct hash *, void *, struct file *, off_t, uint32_t, uint32_t, bool);
+void init_spt (struct hash *spt);
+void destroy_spt (struct hash *spt);
+void init_spte (struct hash *spt, void *page_addr, void *frame_addr);
+void init_zero_spte (struct hash *spt, void *page_addr);
+void init_frame_spte (struct hash *spt, void *page_addr, void *frame_addr);
+struct spte *init_file_spte (struct hash *spt, void *p_a, struct file *f, off_t os, uint32_t rb, uint32_t zb, bool flag);
 void prepare_mem_page(struct spte *spte, void *frame_addr, bool flag);
-bool load_page (struct hash *, void *);
+bool do_lazy_load (struct hash *, void *);
 struct spte *get_spte (struct hash *, void *);
 void delete_and_free (struct hash *spt, struct spte *entry);
 

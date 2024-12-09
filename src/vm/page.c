@@ -131,11 +131,11 @@ void prepare_mem_page(struct spte *spte, void *frame_addr, bool flag)
 /*
     page의 lazy한 load를 구현함. 
     즉, page fault시의 요청된 page를 선택적으로 load.
-    따라서 load_page는 pg fault handler에서 호출됨
+    따라서 do_lazy_load는 pg fault handler에서 호출됨
     ..
 */
 bool
-load_page (struct hash *spt, void *page_addr)
+do_lazy_load (struct hash *spt, void *page_addr)
 {
   struct spte *e;
   uint32_t *pagedir;
@@ -188,12 +188,7 @@ spt_hash_func (const struct hash_elem *elem, void *aux)
 static bool 
 comp_spt_va (const struct hash_elem *e1, const struct hash_elem *e2, void *aux)
 {
-  /*  
-  void *a_page_addr = hash_entry (e1, struct spte, hash_elem)->page_addr;
-  void *b_page_addr = hash_entry (e2, struct spte, hash_elem)->page_addr;
 
-  return a_page_addr < b_page_addr;
-  */
 
   return hash_entry (e1, struct spte, hash_elem)->page_addr < hash_entry (e2, struct spte, hash_elem)->page_addr;
 }
@@ -201,12 +196,6 @@ comp_spt_va (const struct hash_elem *e1, const struct hash_elem *e2, void *aux)
 static void
 spte_free (struct hash_elem *e, void *aux)
 {
-  //struct spte *e;
-
-  //e = hash_entry (e, struct spte, hash_elem);
-
-  //free(e);
-
   free(hash_entry (e, struct spte, hash_elem));
 }
 

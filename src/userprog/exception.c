@@ -212,17 +212,11 @@ page_fault (struct intr_frame *f)
   */
   bool isValidExtend = esp - STACK_BUFFER <= fault_addr && STACK_LIMIT <= fault_addr;
   if (isValidExtend) {
-      // 유효한 확장 조건 하에서, (나중에 추가)
-    //if (!get_spte(spt, page_addr)) {
-      // 그런 page가 할당 못받았다면? 
-      // zeroing 후 gkfekd.
-      //init_zero_spte (spt, page_addr);
-    //}
 
     init_zero_spte(spt, page_addr);
   }
 
-  if (load_page (spt, page_addr)) {
+  if (do_lazy_load (spt, page_addr)) {
      return;
   }
   //
