@@ -129,7 +129,7 @@ main (void)
   filesys_init (format_filesys);
 #endif
 
-  init_swap_valid_table();
+  init_swap_table_and_disk();
   init_Lock_and_Table();
   printf ("Boot complete.\n");
   

@@ -4,7 +4,7 @@
 
 static struct list frameTable; /* 프레임 테이블, 실제 fte 소유 주체 */
 static struct lock fTableLock;  /* frame table에 대한 atomic access를 구현 */
-static struct fte *clock_cursor; /* fte에서 어떤 frame을 evict해야하나? (가르키는 대상이 fte이므로 type도 fte)*/
+static struct fte *victim_pointer; /* fte에서 어떤 frame을 evict해야하나? (가르키는 대상이 fte이므로 type도 fte)*/
 
 /*
     frame, fte등의 initialization.
@@ -21,7 +21,7 @@ init_Lock_and_Table ()
 {
   list_init (&frameTable);
   lock_init (&fTableLock);
-  clock_cursor = NULL;
+  victim_pointer = NULL;
 }
 
 
@@ -47,7 +47,7 @@ falloc_get_page(enum palloc_flags flags, void *page_addr)
     물리 메모리가 부족해 페이지 요청이 실패한 경우이다. 
      = need to SWAP! and EVICT
     */
-    evict_page(); 
+    choose_victim(); 
     frame_addr = palloc_get_page (flags);
     if (frame_addr == NULL)
       return NULL; // 그래도 안된다? -> NULL..
@@ -115,25 +115,27 @@ getFte (void* frame_addr)
   return NULL;
 }
 
-void evict_page() {
+
+/*
+void choose_victim() {
   ASSERT(lock_held_by_current_thread(&fTableLock));
 
-  struct fte *e = clock_cursor;
+  struct fte *e = victim_pointer;
   struct spte *s;
 
-  /* BEGIN: Find page to evict */
+   //BEGIN: Find page to evict 
   do {
     if (e != NULL) {
       pagedir_set_accessed(e->t->pagedir, e->page_addr, false);
     }
 
-    if (clock_cursor == NULL || list_next(&clock_cursor->list_elem) == list_end(&frameTable)) {
+    if (victim_pointer == NULL || list_next(&victim_pointer->list_elem) == list_end(&frameTable)) {
       e = list_entry(list_begin(&frameTable), struct fte, list_elem);
     } else {
       e = list_next (e);
     }
   } while (!pagedir_is_accessed(e->t->pagedir, e->page_addr));
-  /*  END : Find page to evict */
+  // END : Find page to evict 
 
   s = get_spte(&thread_current()->spt, e->page_addr);
   s->status = PAGE_SWAP;
@@ -143,3 +145,55 @@ void evict_page() {
     falloc_free_page(e->frame_addr);
   } lock_acquire(&fTableLock);
 }
+*/
+
+void choose_victim() {
+    /* fTableLock 락이 현재 스레드에 의해 획득되어 있는지 검증 */
+    ASSERT(lock_held_by_current_thread(&fTableLock));
+
+    /* Clock 알고리즘을 위한 커서 */
+    struct fte *candidate = victim_pointer;
+    struct spte *pte_entry;
+
+    /* ============================
+       희생 페이지 선택 과정
+       Clock 알고리즘:
+       accessed 비트를 0으로 클리어 후
+       여전히 accessed이면 다음 페이지로 이동
+       accessed가 false인 페이지 발견 시 중단
+       ============================ */
+    for (;;) {
+        /* 현재 candidate 페이지의 accessed 비트 비활성화 */
+        if (candidate != NULL) {
+            pagedir_set_accessed(candidate->t->pagedir, candidate->page_addr, false);
+        }
+
+        /* 다음 프레임으로 이동:
+           victim_pointer가 끝이나 NULL이라면 frameTable의 처음으로 돌아감 */
+        if (victim_pointer == NULL 
+            || list_next(&victim_pointer->list_elem) == list_end(&frameTable)) 
+        {
+            candidate = list_entry(list_begin(&frameTable), struct fte, list_elem);
+        } else {
+            candidate = list_entry(list_next(&candidate->list_elem), struct fte, list_elem);
+        }
+
+        /* accessed 비트 다시 확인:
+           false면 희생 페이지로 결정 후 반복 종료 */
+        if (!pagedir_is_accessed(candidate->t->pagedir, candidate->page_addr)) {
+            break;
+        }
+    }
+
+    /* SPTE 가져와 스왑 상태로 전환 */
+    pte_entry = get_spte(&thread_current()->spt, candidate->page_addr);
+    pte_entry->status = PAGE_SWAP;
+    pte_entry->swap_id = swap_out(candidate->frame_addr);
+
+    /* 프레임 해제:
+       락 해제 후 페이지 해제, 다시 락 획득 */
+    lock_release(&fTableLock); {
+        falloc_free_page(candidate->frame_addr);
+    } lock_acquire(&fTableLock);
+}
+
