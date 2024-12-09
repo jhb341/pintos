@@ -989,38 +989,30 @@ void evict_page() {
 ### 7. On process termination
 
 ### Implementation & Improvement from the previous design 
+
 ```
 ./userprog/process.c
 void
 process_exit (void)
 {
  ...
-
   for (i = 0; i < cur->mapid; i++){
     sys_munmap (i);
   }
-
-  
   destroy_spt (&cur->spt); 
-
   ...
 }
 ```
+
+먼저, process 가 exit 할 때, 모든 mmf 들을 닫아주어야하기 때문에 모든 mapid 에 대해 sys_munmap 함수를 이용해 unmapping 해준다. 그리고 위에서 설명한 destroy_spt 함수를 통해 supplemental page table 함수도 삭제해준다. 이 함수는 위에서 자세히 설명되어있다. 
+
 ### Difference from design report
 
-#### 디자인 레포트 (참고)
-
-`all_LockList`: 모든 lock을 관리하는 리스트 데이터 구조로, 생성된 lock을 추적하기 위해 global하게 선언한다. 이를 통해 acquire되거나 release된 모든 lock을 추적할 수 있다. 그리고, Lock 구조체의 필드에 list_elem을 추가하여 `all_LockList`에 연결할 수 있도록 한다. 그 외의 추가적인 구조체나 변수는 필요하지 않다.
-
-- `release_frame_resources` : 현재 thread가 사용한 frame을 모두 해제한다. Frame table에서 해당 thread의 frame들을 제거한다.
-- `release_supplemental_page_table` : Thread에 연결된 supplemental page table 엔트리를 순회하며 모든 가상 메모리 매핑 정보를 삭제한다.
-- `release_file_mappings` : Memory-mapped 파일 목록을 순회하며 모든 매핑을 해제하고 관련 자원을 반환한다.
-- `release_all_locks`** : `all_LockList`를 순회하며 해당 thread가 보유한 모든 lock을 release한다.
-
----
+디자인 레포트와 달라진 점?? 
 
 ### Overall Limitations 
 
+fail 뜬거 왜그런건지 설명 
 
 ### Overall Discussion 
 
