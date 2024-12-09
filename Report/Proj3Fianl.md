@@ -810,6 +810,16 @@ void init_swap_valid_table()
 
 그리고 위의 bitmap 을 활성화 시키기 위해서 init_swap_valid_table 함수를 추가하였다. 먼저 block_get_role 함수 호출을 통해서 여러 블록 중 swap 될 블락 하나를 swap_block 변수에 저장해주었다. 그리고 bitmap_create 함수를 통해 swap_valid_table 를 활성화시켜주었다. 이때 bitmap 의 크기는 swap_table 의 크기를 SECTOR_NUM 으로 나눈 값을 갖도록 하였다. 그리고 bitmap_set_all 함수를 호출하여 모두 true 값, 즉, swap out 이 가능한 상태로 설정해주었다. 
 
+```
+// ./thread/init.c 
+int
+main (void)
+{
+  // 여기서 init_swap_valid_table 함수 호출해야 됨 
+}
+```
+
+그리고 main 함수에서 init_swap_valid_table 함수를 호출하여 초기화해주었다. 
 
 ```
 // ./vm/swap.c
@@ -822,68 +832,8 @@ void init_swap_valid_table()
     lock_init(&swap_lock);
 }
 ```
-```
 
-```
-./vm/frame.c
-
-static struct fte *clock_cursor; 
-
-void
-frame_init ()
-{
-  ...
-  clock_cursor = NULL;
-}
-```
-
-```
-void *
-falloc_get_page(enum palloc_flags flags, void *upage)
-{
-  ...
-  if (kpage == NULL)
-  {
-    evict_page(); // 이부분 추가! 
-    kpage = palloc_get_page (flags); 
-    if (kpage == NULL)
-      return NULL; 
-  }
-  ...
-}
-```
-
-```
-void evict_page() {
-  ASSERT(lock_held_by_current_thread(&frame_lock));
-
-  struct fte *e = clock_cursor;
-  struct spte *s;
-
-  /* BEGIN: Find page to evict */
-  do {
-    if (e != NULL) {
-      pagedir_set_accessed(e->t->pagedir, e->upage, false);
-    }
-
-    if (clock_cursor == NULL || list_next(&clock_cursor->list_elem) == list_end(&frame_table)) {
-      e = list_entry(list_begin(&frame_table), struct fte, list_elem);
-    } else {
-      e = list_next (e);
-    }
-  } while (!pagedir_is_accessed(e->t->pagedir, e->upage));
-  /*  END : Find page to evict */
-
-  s = get_spte(&thread_current()->spt, e->upage);
-  s->status = PAGE_SWAP;
-  s->swap_id = swap_out(e->kpage);
-
-  lock_release(&frame_lock); {
-    falloc_free_page(e->kpage);
-  } lock_acquire(&frame_lock);
-}
-```
-
+다음으로 swapping in 과 out 을 구현하였는데 해당 과정을 위해 swap_lock 을 선언하여 atomic 하게 진행할 수 있도록 하였다. 
 
 ```
 // ./vm/swap.c
@@ -918,6 +868,28 @@ void swap_in(struct spte *page, void *kva)
 }
 ```
 
+먼저, swap in 함수 에서는 먼저 swap_lock 을 통해 atomic 하게 접근하고, id 가 bitmap 내에서 맞는 범위에 해당하는지를 확인해준다. 그리고 bitmap_test 함수를 사용해 ID 가 참조하는 swap slot 이 사용중인지를 확인해준다. 이때, true 면 swap slot 이 비어있다는 것을 뜻한다. 그리고 bitmap_set 함수를 사용해 해당 swap slot 을 true 로 설정하여 사용중임을 나타내도록 한다. 이 과정이 끝나면 lock 을 다시 release 해준다. 
+
+```
+bool
+load_page (struct hash *spt, void *upage)
+{
+  ...
+  switch (e->status)
+  {
+  case PAGE_ZERO:
+    memset (kpage, 0, PGSIZE);
+    break;
+
+  case PAGE_SWAP:
+    swap_in(e, kpage);  
+    break;
+  ...
+}
+```
+
+그리고 앞서 설명한 load_page 함수에서 PAGE_SWAP 일 경우에 swap_in 함수를 통해 swapping 을 구현하였다. 
+
 ```
 // ./vm/swap.c
 
@@ -941,43 +913,78 @@ int swap_out(void *kva)
 }
 ```
 
+다음으로는 swap_out 함수이다. 위와 비슷하게 bitmap_scan_and_flip 함수를 사용해 비어있는 상태의 swap slot 을 찾은 뒤 false (사용중)으로 수정해준다. 이 과정은 atomic 하게 진행된다. 그리고 해당 swap slot 에 맞는 swap block에 block_write 함수를 사용하여 데이터를 저장해준다. 이 과정은 for loop 를 이용해 구현하였다. 
 
+```
+./vm/frame.c
+
+static struct fte *clock_cursor; 
+
+void
+frame_init ()
+{
+  ...
+  clock_cursor = NULL;
+}
+
+void *
+falloc_get_page(enum palloc_flags flags, void *upage)
+{
+  ...
+  if (kpage == NULL)
+  {
+    evict_page(); // 이부분 추가! 
+    kpage = palloc_get_page (flags); 
+    if (kpage == NULL)
+      return NULL; 
+  }
+  ...
+}
+```
+
+그리고 clock_cursor 라는 frame table entry 를 정의하였는데 이는 free 상태인 frame 이 없을 경우, evict 할 frame 을 찾기 위해 정의하였다. 위의 falloc_get_page 함수에서 evict_page() 함수를 호출하게 되는데, 이때 이 entry 가 사용된다. 
+
+
+```
+void evict_page() {
+  ASSERT(lock_held_by_current_thread(&frame_lock));
+
+  struct fte *e = clock_cursor;
+  struct spte *s;
+
+  do {
+    if (e != NULL) {
+      pagedir_set_accessed(e->t->pagedir, e->upage, false);
+    }
+
+    if (clock_cursor == NULL || list_next(&clock_cursor->list_elem) == list_end(&frame_table)) {
+      e = list_entry(list_begin(&frame_table), struct fte, list_elem);
+    } else {
+      e = list_next (e);
+    }
+  } while (!pagedir_is_accessed(e->t->pagedir, e->upage));
+
+  s = get_spte(&thread_current()->spt, e->upage);
+  s->status = PAGE_SWAP;
+  s->swap_id = swap_out(e->kpage);
+
+  lock_release(&frame_lock); {
+    falloc_free_page(e->kpage);
+  } lock_acquire(&frame_lock);
+}
+```
+
+`evict_page` 함수는 물리 메모리가 부족할 때 사용되지 않는 페이지를 선택하여 스왑 영역으로 내보내는 역할을 수행한다. 시계 알고리즘(Clock Algorithm)을 사용하여 교체 대상 페이지를 찾도록 하였다.
+
+먼저, 함수는 `frame_lock`을 호출한 스레드가 보유하고 있는지 확인하고, 현재 프레임 테이블 항목을 가리키는 `clock_cursor`를 기준으로 탐색을 시작한다. `pagedir_set_accessed`를 호출하여 현재 페이지의 `accessed` 비트를 `false`로 초기화하고, 시계 알고리즘을 통해 최근에 접근되지 않은 페이지를 찾는다. 탐색 중 프레임 테이블의 끝에 도달하면 다시 처음부터 탐색을 이어간다. 조건을 만족하는 페이지를 찾을 때까지 `pagedir_is_accessed`를 사용하여 확인한다.
+
+교체 대상 페이지가 결정되면, 해당 페이지의 페이지 테이블 엔트리(`spte`)를 가져와 상태를 `PAGE_SWAP`으로 설정하고, `swap_out`을 호출하여 페이지 내용을 스왑 영역에 저장한다. 이때 반환된 `swap_id`는 페이지의 저장 위치를 추적하기 위함이다.
+
+페이지 내용이 스왑 영역으로 저장된 후, 락을 해제(`lock_release`)하고 `falloc_free_page`를 호출하여 physical 메모리를 해제한다. 
 
 ### Difference from design report
-#### design report 참고 
 
-Swap 영역의 사용 여부를 추적하기 위해 bitmap을 사용하며, 이를 swap_table로 정의한다. 특정 bit가 1로 설정된 경우 해당 영역이 swap-out 가능하다는 것을 의미하도록 한다. 이 외에도 disk와 swap 작업의 동기화를 관리하기 위해 다음과 같은 구조체를 사용한다.
-
-아래의 내용 맞는지 확인 필요 
-- `swap_disk`: swap 영역이 위치한 디스크를 관리.
-- `swap_lock`: swap 작업이 동기화되도록 보호.
-
-```
-struct swap_disk {
-    struct block *disk;      // Disk block 포인터
-    size_t size;             // Swap 영역 크기
-    struct bitmap *swap_map; // Bitmap으로 swap 상태 관리
-};
-
-struct lock swap_lock;       // Swap 작업 동기화
-```
-
-Swap-in과 Swap-out 각각의 동작을 다음과 같이 정의한다:
-
-- `swap_out(frame)`:  
-  - Disk에서 사용할 빈 슬롯을 bitmap에서 찾는다.  
-  - 해당 페이지를 디스크에 저장하고, Supplemental page table을 업데이트한다.  
-  - Physical memory에서 페이지 매핑을 제거한다.  
-
-- `swap_in(page)`: 
-  - Physical memory의 frame을 새로 할당한다.  
-  - Disk에서 swap table을 참조하여 해당 데이터를 읽어온다.  
-  - 데이터를 메모리에 로드한 후, Supplemental page table을 업데이트한다.  
-
-- `evict_page()`:   
-  - Clock algorithm을 통해 swap-out할 페이지를 선택한다.  
-  - 선택된 페이지를 swap_out 함수로 처리하여 공간을 확보한다.
-
+디자인 레포트와 비슷한 형식으로 구현하였다.   
 
 ### 7. On process termination
 
