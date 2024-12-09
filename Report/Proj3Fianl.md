@@ -1,87 +1,514 @@
+# CSED 312 Project 3 Final Report 
+김지현(20220302) 
+전현빈(20220259)
+
 ## Design Implementation 
+
 ### 1. Frame table
 
-#### Basics
+### Implementation & Improvement from the previous design 
 
-위에서 설명한 바와 같이 Frame은 물리 메모리의 연속적인 영역을 나타낸다. Frame table은 이러한 물리 메모리의 frame들을 효율적으로 관리하기 위한 데이터 구조이다. Frame table의 각 entry는 특정 frame에 로드된 페이지의 포인터를 포함하며, 각 frame이 어떤 페이지와 매핑되어 있는지를 명시한다. 기존 PintOS에서는 page(즉, 가상 메모리)에 대한 관리만을 위해 page table이 구현되어 있을 뿐, frame table에 대한 구현은 존재하지 않는다.
+frame table은 list 로 구현할 예정이며 각 list 에 들어갈 entry 를 vm directory 에 frame.h 파일을 만들어 생성하였다. 
 
-#### Limitations and Necessity
-
-Frame table이 없으면 물리 메모리를 효율적으로 관리하기 어렵다. 기존 PintOS에서는 특정 프로세스가 어떤 frame을 사용하는지 추적할 방법이 없으며, 메모리 부족 상황에서 swap을 수행할 수 없는 한계가 존재한다. Frame table을 도입하면 사용 중인 frame을 추적할 수 있으며, 비어 있는 frame이 없는 경우 eviction 정책을 통해 이미 할당된 페이지를 swap out하여 여유 공간을 확보할 수 있다. 이를 통해 새 페이지를 할당하고 프로세스의 정상적인 동작을 유지할 수 있다. (swap 에 관한 내용은 6번에서 자세히 설명하였다)
-
-#### Blueprint (Proposal)
-
-##### Data Structure
-
-Frame table은 list를 사용해 구현할 예정이다. 이 리스트는 각 frame을 나타내는 frame table entry로 구성된다. frame table entry는 새로운 구조체로 선언할 것이며, 해당 구조체는 physical memory frame 주소와 virtual page 주소를 분리하여 저장한다. 또한, list_elem 필드를 통해 frame table 리스트에 연결 리스트 형태로 저장할 예정이다. Frame table은 global 데이터이므로, 이를 보호하기 위해 lock을 사용하여 atomic하게 접근하도록 할 예정이다.
-
-##### Data Structure Definition
-```c
-// Frame table
-struct list FrameTable;
-
-// Frame table entry
-struct FrameTableEntry {
-    struct list_elem FTE_elem;  // List element for connection
-    void *frame_adr;            // Address of the physical frame
-    void *page_adr;             // Address of the mapped virtual page
-};
-
-// Lock for frame table
-struct lock ftLock;
+```
+./vm/frame.h
+struct fte
+  {
+    void *kpage;   
+    void *upage;  
+    struct thread *t; 
+    struct list_elem list_elem; 
+  };
 ```
 
----
+frame table entry로는 kernel page (kpage), user page (upage), t (해당 fte 를 소유하는 thread), 그리고 list_elem (frame table 에 연결될 list) 로 구현하였다. 그리고 ./vm/frame.c 파일에서  frame table 과 관련된 변수와 함수를 선언하였다. 
 
-##### Pseudo Code or Algorithm
+```
+static struct list frame_table; 
+static struct lock frame_lock; 
+```
 
-**Eviction Policy**  
-Frame table 관리에는 Clock Algorithm을 기반으로 한 eviction policy를 사용하려고 한다. 특정 엔트리가 비어 있는 경우에는 새로운 페이지 포인터를 해당 엔트리에 추가한다. 하지만 모든 엔트리가 이미 특정 페이지 포인터를 보유한 경우 eviction policy에 따라 지정된 페이지를 swap out한 후 새로운 페이지를 할당한다.이를 구현하기 위해 다음과 같은 세 가지 함수를 추가 할 예정이다:
+먼저, 실제로 fte 들을 소유하는 frame_table 을 list 형태로 선언하였다. 그리고 frame table 이 작동할 때, atomic 할 수 있도록 frame_lock 이라는 lock 을 선언하였다. 
 
-- `init_ft`: Frame table과 관련된 전역 데이터 구조(FrameTable과 ftLock)를 초기화한다.
-- `alloc_new_frame`: 요청된 `page_adr`와 매핑되는 새 유효 `frame_adr`을 할당한다. 성공 시 FrameTableEntry에 해당 정보를 저장하고 요청된 페이지 주소에 매핑된 frame 주소를 반환한다.
-- `free_frame`: `alloc_new_frame`을 통해 할당된 frame과 매핑된 페이지를 할당 해제하고 관련 엔트리를 정리한다.
+```
+// ./vm/frame.c
+void
+frame_init ()
+{
+  list_init (&frame_table);
+  lock_init (&frame_lock);
+}
+
+// ./thread/init.c
+int
+main (void)
+{
+  ...
+  frame_init();
+  ...
+}
+```
+
+다음으로, frame table 을 initiation 해주는 함수를 구현하였다. list 데이터 타입으로 frame_table 을 선언하였으니 list_init 함수를 통해 frame_table 을 초기화해주었다. 그리고 frame_lock 이라는 lock 도 lock_init 함수를 통해초기화해주었다. 
+
+위에서 설명한 frame_init 함수는 thread/init.c 의 main 함수에서 pintos 가 시작할 때 초기화된다. 
+
+```
+// ./userprog/process.c
+static bool
+setup_stack (void **esp) 
+{
+  ...
+  kpage = falloc_get_page(PAL_USER | PAL_ZERO, PHYS_BASE - PGSIZE);
+  if (kpage != NULL) 
+    {
+      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
+      if (success){
+        *esp = PHYS_BASE;
+      }
+      else{
+        falloc_free_page(kpage);
+      }
+    }
+   ...
+}
+```
+
+위의 setup_stack 함수에서 기존에는 palloc 을 사용해서 kernel virtual page 를 생성했다면, 이제는 falloc 을 사용해서 할당 및 해제해주었다. falloc 관련 함수는 아래에서 설명할 예정이다. 
+
+```
+void *
+falloc_get_page(enum palloc_flags flags, void *upage)
+{
+  struct fte *e;
+  void *kpage;
+
+  lock_acquire (&frame_lock);
+
+  kpage = palloc_get_page (flags);
+  if (kpage == NULL)
+  {
+    lock_release (&frame_lock);
+    return NULL;
+  }
+
+  e = (struct fte *)malloc (sizeof *e); 
+  e->kpage = kpage; 
+  e->upage = upage; 
+  e->t = thread_current (); 
+  list_push_back (&frame_table, &e->list_elem);
+
+  lock_release (&frame_lock); 
+  return kpage;
+}
+```
+
+먼저, falloc 은 palloc 을 사용해 upage 에 translate 될 kpage 를 할당받는다. 그리고 frame table entry 를 malloc 을 사용해 할당한 뒤, 위에서 설명한 fte 의 각 element 를 할당하고, frame_table 에 list_push_back 을 이용해 추가해준다. 이때, frame_table 에 여러 thread 가 접근하는 것을 막기 위해  frame_lock 을 사용하여 atomic 하게 해당 과정이 이루어 질 수 있도록 하였다. 그리고 만약 palloc 이 실패한다면 lock release 를 해준 뒤 null 을 반환하도록 하였다. 성공한다면 새롭게 palloc 을 통해 할당된 kpage 를 반환해준다. 
+
+```
+void
+falloc_free_page (void *kpage)
+{
+  struct fte *e;
+  lock_acquire (&frame_lock);
+
+  e = get_fte (kpage); 
+  if (e == NULL)
+    sys_exit (-1); 
+
+  list_remove (&e->list_elem); 
+  palloc_free_page (e->kpage); 
+  pagedir_clear_page (e->t->pagedir, e->upage); 
+  free (e);
+
+  lock_release (&frame_lock);
+}
+```
+
+위의 setup_stack 함수에서 만약 install_page 가 실패하면 falloc 해준 kpage 를 free 해주어야한다. 위의 함수를 보면 먼저, kpage 를 갖는 frame table entry 를 찾아와 (get_fte 함수 호출), 먼저, list_elem 에서 remove 해준다. 그리고, palloc_free_page 함수를 사용해 해당 kpage 를 free 해주고, 마지막으로, pagedir_clear_page 함수를 통해 kpage -> upage 접근을 막도록 하였다. 마지막으로 fte 를 free 해주었다. 이때, frame_table 에 대한 atomic 접근을 보장하기 위해 frame_lock 을 사용하였다. 
+
+```
+struct fte *
+get_fte (void* kpage)
+{
+  struct list_elem *e;
+  for (e = list_begin (&frame_table); e != list_end (&frame_table); e = list_next (e))
+    if (list_entry (e, struct fte, list_elem)->kpage == kpage)
+      return list_entry (e, struct fte, list_elem);
+  return NULL;
+}
+```
+falloc_free_page 에서 사용한 get_fte 는 kpage 에 대응되는 frame table entry 를 반환하는 함수이다. for loop 를 이용해 frame_table 의 entry 를 하나씩 확인하며 대응되는 kpage 를 찾으면 해당 list_entry 를 반환하고, 만약 대응되는 kpage 가 없으면 NULL 을 반환한다.  
+
+### Difference from design report
+
+디자인 리포트에서 작성한 pseudocode 를 바탕으로 작성하였다.  
+
+### 2. Supplemental page table 
+
+lazy loading에 spte 가 사용되어서, supplemental page table 을 먼저 설명할 예정이다. 
+
+### Implementation & Improvement from the previous design 
+
+```
+// ./vm/page.h
+struct spte
+  {
+    void *upage;
+    void *kpage;
+    struct hash_elem hash_elem;
+    int status;
+    struct file *file;  
+    off_t ofs;  
+    uint32_t read_bytes, zero_bytes;  
+    bool writable; 
+  };
+```
+
+먼저, supplemental page table 은 hash table 을 이용해 구현하는 것이 권장되어서 위와 같이 선언해주었다. 위의 구조체는 supplemental page table entry 이며, 순서대로, physical page, virtual page, hash element, status (PAGE_FRAME, PAGE_ZERO, PAGE_SWAP, 또는 PAGE_FILE)이 element 로 있다. 그리고 페이지에 파일이 연결되어있을 경우를 위해, file pointer, offset, 읽어야 하는 바이트 수, 0으로 설정되어야 할 바이트 수, 그리고 페이지에 write 이 가능한지 여부를 저장해준다. 
+
+```
+// ./threads/thread.h
+struct thread
+  {
+   ...
+    struct hash spt;
+  };
+
+// ./threads/thread.c
+tid_t
+thread_create (const char *name, int priority,
+               thread_func *function, void *aux) 
+{
+  ...
+  init_spt(&t->spt);
+  ...
+}
+```
+
+그리고 thread 구조체에 hash 타입으로 supplement page table 을 추가해주었다. 그리고 thread_create 함수에서 supplemental page table 을 초기화해주었다. init_spt 함수는 아래의 ./vm/page.c 파일을 설명하면서 더 자세히 설명할 예정이다. 
+
+```
+static hash_hash_func spt_hash_func;
+static hash_less_func spt_less_func;
+```
+
+다음으로, ./vm/page.c 에서 supplemental page table 에 관한 함수와 변수들을 선언해주었다. 먼저, hash init 함수를 이용해 supplemental page table 을 초기화해주어야 하는데, 이때, hash_hash_func 과 hash_less_func 가 필요하여 먼저 선언해주었다. 
+
+```
+static unsigned
+spt_hash_func (const struct hash_elem *elem, void *aux)
+{
+  struct spte *p = hash_entry(elem, struct spte, hash_elem);
+
+  return hash_bytes (&p->upage, sizeof (p->kpage));
+}
+```
+
+spt_hash_func 함수는 인자로 받아오는 hash_elem 에 해당하는 hasg entry 를 가져와 이 값을 기반으로 hash 값을 생성해주는 함수이다.  
+
+```
+static bool 
+spt_less_func (const struct hash_elem *a, const struct hash_elem *b, void *aux)
+{
+  void *a_upage = hash_entry (a, struct spte, hash_elem)->upage;
+  void *b_upage = hash_entry (b, struct spte, hash_elem)->upage;
+
+  return a_upage < b_upage;
+}
+```
+
+spt_less_func 함수는 hash table entry 를 비교하는 boolean 함수이다. 
+
+```
+void
+init_spt (struct hash *spt)
+{
+  hash_init (spt, spt_hash_func, spt_less_func, NULL);
+}
+```
+
+위의 두 함수를 사용해 hash_init 함수를 호출하여 init_spt 함수를 구현하였다. 
+
+```
+static void page_destutcor (struct hash_elem *elem, void *aux);
+static void
+page_destutcor (struct hash_elem *elem, void *aux)
+{
+  struct spte *e;
+
+  e = hash_entry (elem, struct spte, hash_elem);
+
+  free(e);
+}
+```
+
+그리고 spt 를 delete 하는 함수가 필요하다. hash_destroy 함수 호출을 통해 구현하여야 하는데, 이때 page_destructor 에 해당하는 함수가 필요하여 추가적으로 구현하였다. 위에 보이는 page_destructor 함수는 인자로 넘겨준 elem 에 해당하는 hash entry 를 가져와 free 함수를 통해 해제시켜준다. 
+
+```
+void
+destroy_spt (struct hash *spt)
+{
+  hash_destroy (spt, page_destutcor);
+}
+```
+
+위에서 설명한 page_destructor 를 인자로 넘겨 hash_destroy 함수를 통해 supplemental page table 을 제거하는 함수를 구현하였다. 이렇게 supplemental page table 에 해당 구현을 하였고 아래의 함수들은 supplemental page table entry 와 관련된 함수들이다.
+
+```
+#define PAGE_ZERO 0
+#define PAGE_FRAME 1
+#define PAGE_FILE 2
+#define PAGE_SWAP 3
+```
+
+먼저 매크로로 위의 네가지 상태를 정의하였다. PAGE ZERO 는 아직 페이지가 할당되지 않은 상태를 말한다. PAGE FRAME은 페이지가 physical memory 에 매핑된 상태를 말한다. PAGE_FILE 은 페이지가 파일 시스템에 저장되어 필요 시 파일 시스템에서 읽어와야할 때를 말한다. 이 경우는 아래에서 설명할 LAZY LOADING 에서 사용될 예정이다. 마지막으로 PAGE_SWAP 은 페이지가 swap 공간에 저장되어있는 상태를 말하며 아래의 swap table 설명에서 더 자세히 다룰 예정이다.
+
+각 매크로에 맞게 spte initiation 함수를 작성하였다. 위의 매크로 순서대로 설명할 예정이다. 
+
+```
+void
+init_zero_spte (struct hash *spt, void *upage)
+{
+  struct spte *e;
+  e = (struct spte *) malloc (sizeof *e);
+  
+  e->upage = upage;
+  e->kpage = NULL;
+  
+  e->status = PAGE_ZERO;
+  
+  e->file = NULL;
+  e->writable = true;
+  
+  hash_insert (spt, &e->hash_elem);
+}
+```
+
+먼저 PAGE_ZERO 의 경우 데이터들을 0으로 채워야한다. 즉, 아직 kpage 매핑이 되지 않은 상태이기 때문에kpage 를 null 로 할당해준다. 그리고, upage 는 인자로 받아온 upage 로 할당해주고 file 과 writable 도 각각 null, true 로 할당해준다. 마지막으로 supplemental page table 에 hash_insert 함수를 사용해 추가해준다. 
+
+```
+void
+init_frame_spte (struct hash *spt, void *upage, void *kpage)
+{
+  struct spte *e;
+  e = (struct spte *) malloc (sizeof *e);
+
+  e->upage = upage;
+  e->kpage = kpage;
+  
+  e->status = PAGE_FRAME;
+
+  e->file = NULL;
+  e->writable = true;
+  
+  hash_insert (spt, &e->hash_elem);
+}
+```
+
+다음으로, PAGE_FRAME 의 경우, 위와 비슷하지만 kpage 를 인자로 받아와 할당해주는 과정을 추가하였다. 
+
+```
+struct spte *
+init_file_spte (struct hash *spt, void *_upage, struct file *_file, off_t _ofs, uint32_t _read_bytes, uint32_t _zero_bytes, bool _writable)
+{
+  struct spte *e;
+  
+  e = (struct spte *)malloc (sizeof *e);
+
+  e->upage = _upage;
+  e->kpage = NULL;
+  
+  e->file = _file;
+  e->ofs = _ofs;
+  e->read_bytes = _read_bytes;
+  e->zero_bytes = _zero_bytes;
+  e->writable = _writable;
+  
+  e->status = PAGE_FILE;
+  
+  hash_insert (spt, &e->hash_elem);
+  
+  return e;
+}
+```
+
+PAGE_FILE 의 경우, 파일을 참조할 때 필요한 file, offset, bytes to read, bytes to set zero, writable 에 해당하는 값들을 인자로 받아와 할당해준다. PAGE_ZERO 와 유사하게 kpage 에 매핑은 되지 않기 때문에 null 로 설정해주었다. 
+
+```
+void
+init_spte (struct hash *spt, void *upage, void *kpage)
+{
+  struct spte *e;
+  e = (struct spte *) malloc (sizeof *e);
+  e->upage = upage;
+  e->kpage = kpage;
+  e->status = PAGE_FRAME;
+  hash_insert (spt, &e->hash_elem);
+}
+```
+
+먼저, init_spte 함수의 경우, spte 구조체를 malloc 을 사용해 새롭게 할당한 후, 인자로 받아온 kpage 와 upage 를 정의해준다. 그리고 supplemental page table 에 해당entry 를 hash_insert 를 이용해 추가해준다. 이때, status 는 PAGE_FRAME 으로 설정해준다. 
+
+PAGE_SWAP 의 경우 아래의 swap 과정에서 다시 설명하도록 하겠다. 다음으로는 supplemental page table entry 를 삭제하는 과정이다. 
+
+```
+void 
+page_delete (struct hash *spt, struct spte *entry)
+{
+  hash_delete (spt, &entry->hash_elem);
+  free (entry);
+}
+```
+
+위의 page_delete 함수를 보면 entry 에 해당하는 hash entry 를 spt (supplemental page table) 에서 hash_delete 함수 호출을 통해 삭제 해 준다. 그리고 해당 entry 를 free 해주었다. 
+
+이렇게 supplemental page table 과 그 entry 와 관련된 함수는 모두 구현하였다. 
+
+```
+// ./userprog/process.c
+static bool
+setup_stack (void **esp) 
+{
+  ...
+      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
+      if (success){
+        init_frame_spte(&thread_current()->spt, PHYS_BASE - PGSIZE, kpage); // 이 부분 추가 
+        *esp = PHYS_BASE;
+      }
+...
+}
+```
+
+setup_stack 함수에서 만약 install page 가 성공하면, init_frame_spte 함수를 실행하여 kpage 를 supplemental page table 에 등록해준다. 
+
+
+### Difference from design report
+
+디자인 레포트에서는 4 가지 status 에 대해서 생각하지 못하여 initiation 과정을 하나만 구상하였는데, 네 가지 다른 status 각각에 맞게 initiation 과정을 추가하였다. 그리고 hash 내부의 함수 사용이 미흡하여 supplemental page table 을 init 하고 delete 하는 함수 구현을 구상하지 못하였는데 supplemental page table entry 에 해당하는 함수를 구현하면서 추가해주었다. 
+
+(추가) 각 initiation 이랑 delete 함수가 어디서 사용되는지?? 
+
 
 ### 2. Lazy loading 
 
-#### Basics
-
-Lazy loading은 access 요청이 올 때마다 필요한 page data를 memory에 저장하는 것을 말한다. 기존의 PintOS는 page의 모든 executable이 memory에 load되는 방식을 사용한다. 아래의 load_segment 를 보면 while loop 를 통해서 해당 세그먼트의 모든 데이터가 페이지 단위로 메모리에 load 되는 것을 볼 수 있다. 그리고 install_page 를 통해 user space 의 virtual address upage 와 kernel 에서 할당한 physical page kpage 를 매핑해준다. 
+### Implementation & Improvement from the previous design 
 
 ```
+// ./userprog/process.c
 static bool
 load_segment (struct file *file, off_t ofs, uint8_t *upage,
               uint32_t read_bytes, uint32_t zero_bytes, bool writable) 
 {
-...
-
-  file_seek (file, ofs);
+  ...
   while (read_bytes > 0 || zero_bytes > 0) 
     {
-	...
-      /* Load this page. */
-      if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
-        {
-          palloc_free_page (kpage);
-          return false; 
-        }
-      memset (kpage + page_read_bytes, 0, page_zero_bytes);
+      init_file_spte (&thread_current()->spt, upage, file, ofs, page_read_bytes, page_zero_bytes, writable);
+  ...
+}
+```
 
-      /* Add the page to the process's address space. */
-      if (!install_page (upage, kpage, writable)) 
-        {
-          palloc_free_page (kpage);
-          return false; 
-        }
-	...
+기존의 load_segment 의 경우 file 을 바로 memory 에 추가하였다면 이제는 lazy loading 과정을 구현해야하기 때문에 위와 같이 init_file_spte 함수를 실행하여 page fault 가 발생한다면 해당 supplemental page table entry element 값 (즉, file) 을 통해 페이지를 저장할 수 있도록 수정하였다.  
+
+```
+static void
+page_fault (struct intr_frame *f) 
+{
+  ...
+  upage = pg_round_down (fault_addr);
+   
+  spt = &thread_current()->spt;
+  spe = get_spte(spt, upage);
+
+  if (load_page (spt, upage)) {
+     return;
+  }
+  ...
+}
+```
+
+그리고 page fault handler 에서 load_page 라는 함수를 통해 page fault 가 발생하였을 때, lazy loading 이 실행될 수 있도록 하였다. load_page 과정은 아래와 같다. 
+
+```
+extern struct lock FileLock;
+
+bool
+load_page (struct hash *spt, void *upage)
+{
+  struct spte *e;
+  uint32_t *pagedir;
+  void *kpage;
+  e = get_spte (spt, upage);
+  if (e == NULL)
+    sys_exit (-1);
+
+  kpage = falloc_get_page (PAL_USER, upage);
+  if (kpage == NULL)
+    sys_exit (-1);
+
+  bool was_holding_lock = lock_held_by_current_thread (&FileLock);
+
+  switch (e->status)
+  {
+  case PAGE_ZERO:
+    memset (kpage, 0, PGSIZE);
+    break;
+
+  case PAGE_SWAP:
+    // implement swapping  
+    break;
+
+  case PAGE_FILE:
+    if (!was_holding_lock)
+      lock_acquire (&FileLock);
+    if (file_read_at (e->file, kpage, e->read_bytes, e->ofs) != e->read_bytes)
+    {
+      falloc_free_page (kpage);
+      lock_release (&FileLock);
+      sys_exit (-1);
     }
+    memset (kpage + e->read_bytes, 0, e->zero_bytes);
+    if (!was_holding_lock)
+      lock_release (&FileLock);
+    break;
+
+  default:
+    sys_exit (-1);
+  }
+    
+  pagedir = thread_current ()->pagedir;
+
+  if (!pagedir_set_page (pagedir, upage, kpage, e->writable))
+  {
+    falloc_free_page (kpage);
+    sys_exit (-1);
+  }
+
+  e->kpage = kpage;
+  e->status = PAGE_FRAME;
+
   return true;
 }
 ```
 
-#### Limitation and Necessity
+page fault 가 났기 때문에 kpage (kernel page) 를 falloc 을 통해 새롭게 할당해준다. 그리고 switch case 를 사용하여 각 상황 (PAGE_ZERO, PAGE_SWAP, 그리고 PAGE_FILE) 각각에 대해서 처리해준다. 먼저, PAGE_ZERO 의 경우 memset 함수를 통해 해당 메모리를 0으로 초기화해준다. 그리고, PAGE_SWAP 의 경우 
 
-모든 executable을 한번에 load하면 불필요한 data까지 memory에 load되어 메모리 공간 낭비가 심각하다는 문제가 있다. 또한 page fault를 처리하는 방법이 process termination과 kernel panic에 의존하기 때문에 효율적이지 못하다. 반면 Lazy loading은 필요한 시점에 필요한 데이터만 메모리에 로드하기 때문에 메모리를 효율적으로 사용할 수 있다는 장점을 갖는다.  
+```
+struct spte *
+get_spte (struct hash *spt, void *upage)
+{
+  struct spte e;
+  struct hash_elem *elem;
+
+  e.upage = upage;
+  elem = hash_find (spt, &e.hash_elem);
+
+  return elem != NULL ? hash_entry (elem, struct spte, hash_elem) : NULL;
+}
+```
+
+
+### Difference from design report
 
 #### Blueprint (Proposal)
 
@@ -108,65 +535,36 @@ Lazy loading은 page fault 발생 시 시작된다. page fault가 발생했을 �
 - `load_page_from_disk`: disk에서 file 데이터를 load하는 함수  
 - `swap_page`: swap 영역에서 데이터를 가져오는 함수 (6번에서 추가 설명)  
 
-### 3. Supplemental page table
-
-#### Basics
-Supplemental page table은 기존 page table을 보완하는 데이터 구조로서 virtual memory의 정보를 관리할 수 있도록 한다. 따라서 virtual memory의 `VA`(virtual adrress)에 해당하는 정보를 하나의 구조체로 묶어 entry `spte`를 구성하고 이러한 entry를 `spt`(supplemental page table)에서 관리할 수 있도록 한다. 
-
-#### Limitation and Necessity
-
-original pintos의 `pte` format은 다음과 같다.
-
-```
-      31                                   12 11 9      6 5     2 1 0
-     +---------------------------------------+----+----+-+-+---+-+-+-+
-     |           Physical Address            | AVL|    |D|A|   |U|W|P|
-     +---------------------------------------+----+----+-+-+---+-+-+-+
-```
-
-현재 구현된 Page Table은 `availability`(AVL), `present`(P), `read/write`(W), `user/supervisor`(U), `accessed`(A), `dirty`(D)의 정보를 0~11bit에 저장한다. 그러나 lazy loading과 같은 기능을 지원하고 page fault를 처리하기 위해서는 추가적인 정보를 포함할 필요가 있다. 현재 pintos는 virtual memory를 관리할 수 있는 table이 함수가 없므로 지정된 virtual memory를 spt를 통해 관리할 수 있도록 한다.
-
-#### Blueprint (proposal)
-##### Data structure
-`spt`의 entry `spte`는 특정 virtual memory의 정보를 갖기 때문에 정해진 VA에 대한 다음과 같은 정보를 가져야 한다. 따라서 아래 요소들은 `spte` 구조체의 필드로 존재한다.
-
-- `va_vpn`: Virtual Page Number
-- `va_offset`: Offset
-- `isLoad`: physical memory에 load시 1, otherwise 0
-- `file`: mapping된 file의 pointer
-- `srcType`: file의 source가 binary인지, mapping file인지, swap disk인지 구분한다.
-- `isWritable`: 해당 VA이 writable하면 1, otherwise 0
-
-그러나 제공된 VA는 매우 많기 때문에 이러한 개별 VA에 대응되는 spte를 list로 관리하면 비효율적이다. 따라서 우리는 pintos에서 이미 구현되어 제공되는 `hash table`을 이용해 spt를 hash table로 구현하기로 한다. 따라서 `struct spte`는 아래의 필드도 포함하여야 한다.
-
-- `spte_hashElem`: spte의 hash table element
-
-##### pseudo code or algorithm
-spt는 아래와 같이 thread의 필드로 선언한다.
-```
-struct thread{
-/* thread.h의 thread 구조체 선언부 */
-	struct hash spt;
-...
-};
-```
-
-hash algorithm을 이용하나, pintos에 미리 구현된 hash table을 사용하며 아래의 함수들로 spt를 관리한다. 
-- `get_spte_key`: spte의 hash key를 반환한다.
-- `get_spte`: spte의 evict등을 위해 spt에서 spte를 return한다.
-- `init_spt`: `hash_init`을 이용해 spt를 초기화한다.
-- `get_new_spte`: malloc을 이용해 새로운 frame을 할당 후 spt에 `has_insert`로 삽입하도록 한다.
-
 
 ### 4. Stack growth
 
-#### Basics
+### Implementation & Improvement from the previous design 
 
-Growing stack은 프로세스의 요청에 따라 유한하게 크기를 동적으로 늘릴 수 있는 메커니즘이다. 그러나 기존 PintOS는 4KB 크기의 fixed-size stack만을 지원하며, dynamic하게 크기를 조정할 수 없다. 이를 해결하기 위해, 프로세스 요청에 따라 4KB보다 더 큰 stack을 제공할 수 있도록 수정해야 한다.
+```
+static void
+page_fault (struct intr_frame *f) 
+{
+  upage = pg_round_down (fault_addr);
+   
+  spt = &thread_current()->spt;
+  spe = get_spte(spt, upage);
 
-#### Limitation and Necessity
+  esp = user ? f->esp : thread_current()->esp;
+  if (esp - 32 <= fault_addr && PHYS_BASE - MAX_STACK_SIZE <= fault_addr) {
+    if (!get_spte(spt, upage)) {
+      init_zero_spte (spt, upage);
+    }
+  }
 
-기존 PintOS는 고정된 4KB의 fixed-stack size를 제공하며, 이를 초과한 stack 요청이 있을 경우 page fault가 발생하도록 설계되어 있다. 그러나 fixed-size stack은 local variable과 argument 수에 제한을 두게 되며, 이는 실제 프로그램 실행에서 유용하지 않다. 따라서 dynamic하게 stack size를 확장할 수 있는 기능이 필요하다.
+  if (load_page (spt, upage)) {
+     return;
+  }
+  if(not_present || is_kernel_vaddr(fault_addr) || !user){
+   sys_exit(-1);
+  }
+```
+
+### Difference from design report
 
 #### Blueprint (Proposal)
 
@@ -185,13 +583,35 @@ Page fault 발생 시 stack grow가 필요한 상황을 확인하고, 조건에 
 
 ### 5. File memory mapping
 
-#### Basics
+### Implementation & Improvement from the previous design
 
-File memory mapping은 파일 내용을 page(가상 메모리)에 매핑하여 프로세스가 메모리에서 파일 데이터에 직접 접근할 수 있도록 하는 메커니즘이다. 기존 PintOS는 파일 입출력을 file_read 및 file_write를 통해서만 처리하도록 구현되어 있다. 이번 프로젝트에서는 페이지를 파일에 매핑하는 file memory mapping을 구현할 것이다.
+```
+struct thread
+  {
+   ...
+    /* for PRJC3 */
+    struct hash spt;
+    void *esp;
 
-#### Limitation and Necessity
+    int mapid; /* 이 스레드가 얼마나 많은 mmf갖고 있나? */
+    struct list mmf_list; /* 그 리스트 */
+  };
+```
 
-기존 PintOS는 file_read와 file_write를 통해서만 파일에 접근할 수 있기 때문에 효율성이 떨어지며, shared resource에 대한 지원이 부족하다. 이를 개선하기 위해 mmap syscall과 munmap syscall을 구현하여 파일 데이터를 디스크에서 메모리로 로드하고, 이를 프로세스가 직접 메모리에서 접근할 수 있도록 한다. 이를 통해 효율적인 메모리 사용이 가능하도록 할 예정이다. 
+```
+// ./threads/thread.c
+tid_t
+thread_create (const char *name, int priority,
+               thread_func *function, void *aux) 
+{
+  ...
+  list_init (&t->mmf_list);
+  t->mapid = 0;
+  ...
+}
+```
+
+### Difference from design report
 
 #### Blueprint (Proposal)
 
@@ -219,18 +639,71 @@ File memory mapping 관리 알고리즘은 다음의 syscall 함수들을 통해
 
 ### 6. Swap table
 
-#### Basics
+### Implementation & Improvement from the previous design 
 
-Swap에는 두 가지 주요 동작이 있다. Swap-in은 page fault가 발생했을 때 disk의 특정 영역에서 페이지를 가져와 memory의 frame에 로드하는 과정을 말하며, Swap-out은 swap-in을 수행하기 위해 정해진 policy에 따라 frame에 로드되어 있던 페이지를 evict하여 swap disk에 저장하고 free frame을 확보하는 과정을 말한다. Swap disk를 관리하기 위해 사용하는 데이터 구조를 swap_table이라 한다.
+```
+./vm/frame.c
 
-Swap 기능을 통해 virtual address를 사용한 address translation은 프로세스 관점에서 무한히 넓은 메모리 공간을 제공하는 것처럼 보이며, 실제 physical memory보다 넓은 영역을 사용할 수 있도록 한다.
+static struct fte *clock_cursor; /* fte에서 어떤 frame을 evict해야하나? (가르키는 대상이 fte이므로 type도 fte)*/
+```
 
+```
+void
+frame_init ()
+{
+  ...
+  clock_cursor = NULL;
+}
+```
 
-#### Limitation and Necessity
+```
+void *
+falloc_get_page(enum palloc_flags flags, void *upage)
+{
+  ...
+  if (kpage == NULL)
+  {
+    evict_page(); // 이부분 추가! 
+    kpage = palloc_get_page (flags); 
+    if (kpage == NULL)
+      return NULL; 
+  }
+  ...
+}
+```
 
-기존 PintOS는 swap 기능이 구현되어 있지 않다. 이로 인해 메모리가 부족한 경우 프로세스가 종료되도록 설계되어 있다. 이는 메모리 활용의 유연성을 크게 제한한다.
+```
+void evict_page() {
+  ASSERT(lock_held_by_current_thread(&frame_lock));
 
+  struct fte *e = clock_cursor;
+  struct spte *s;
 
+  /* BEGIN: Find page to evict */
+  do {
+    if (e != NULL) {
+      pagedir_set_accessed(e->t->pagedir, e->upage, false);
+    }
+
+    if (clock_cursor == NULL || list_next(&clock_cursor->list_elem) == list_end(&frame_table)) {
+      e = list_entry(list_begin(&frame_table), struct fte, list_elem);
+    } else {
+      e = list_next (e);
+    }
+  } while (!pagedir_is_accessed(e->t->pagedir, e->upage));
+  /*  END : Find page to evict */
+
+  s = get_spte(&thread_current()->spt, e->upage);
+  s->status = PAGE_SWAP;
+  s->swap_id = swap_out(e->kpage);
+
+  lock_release(&frame_lock); {
+    falloc_free_page(e->kpage);
+  } lock_acquire(&frame_lock);
+}
+```
+
+### Difference from design report
 #### Blueprint (Proposal)
 
 ##### Data Structure
@@ -272,13 +745,8 @@ Swap-in과 Swap-out 각각의 동작을 다음과 같이 정의한다:
 
 ### 7. On process termination
 
-#### Basics
-
-프로세스가 종료(exit)할 때, 할당된 모든 자원을 해제하여 메모리 누수를 방지해야 한다. 여기서 자원이란 위에서 구현한 frame, supplemental page table 등을 포함한다. 또한, 위의 기능들을 구현하면서 사용된 lock도 반드시 release해야 한다. Lock을 release하지 않고 프로세스를 종료하면 이후 deadlock이 발생할 수 있다.
-
-#### Limitation and Necessity
-
-위의 1~6번에서 설명한 것처럼, 몇몇 구조체와 데이터는 기존 PintOS에 구현되어 있지 않다. 따라서 이러한 리소스를 새롭게 선언하거나 기존 thread 구조체의 필드로 추가하였다. 그러나 기존 PintOS는 이러한 추가된 리소스에 대한 해제를 구현하고 있지 않다. 이를 해결하기 위해 `process_exit` 함수를 수정하여, 종료 시점에서 모든 리소스를 적절히 release하도록 구현할 것이다.
+### Implementation & Improvement from the previous design 
+### Difference from design report
 
 #### Blueprint (Proposal)
 
@@ -292,3 +760,13 @@ Swap-in과 Swap-out 각각의 동작을 다음과 같이 정의한다:
 - `release_supplemental_page_table` : Thread에 연결된 supplemental page table 엔트리를 순회하며 모든 가상 메모리 매핑 정보를 삭제한다.
 - `release_file_mappings` : Memory-mapped 파일 목록을 순회하며 모든 매핑을 해제하고 관련 자원을 반환한다.
 - `release_all_locks`** : `all_LockList`를 순회하며 해당 thread가 보유한 모든 lock을 release한다.
+
+---
+
+### Overall Limitations 
+
+
+### Overall Discussion 
+
+
+# Result 
