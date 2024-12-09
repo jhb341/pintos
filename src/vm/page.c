@@ -6,7 +6,7 @@
 #include <string.h>
 #include "threads/vaddr.h"
 
-static hash_hash_func spt_hash_func;
+static hash_hash_func make_spt_hash;
 static hash_less_func comp_spt_va;
 static void spte_free (struct hash_elem *elem, void *aux);
 extern struct lock FileLock;
@@ -14,14 +14,16 @@ extern struct lock FileLock;
 void
 init_spt (struct hash *spt)
 {
-  hash_init (spt, spt_hash_func, comp_spt_va, NULL);
+  hash_init (spt, make_spt_hash, comp_spt_va, NULL);
 }
 
 void
-destroy_spt (struct hash *spt)
+free_spt_ (struct hash *spt)
 {
   hash_destroy (spt, spte_free);
 }
+
+
 
 void
 init_spte (struct hash *spt, void *page_addr, void *frame_addr)
@@ -72,7 +74,7 @@ init_frame_spte (struct hash *spt, void *page_addr, void *frame_addr)
 }
 
 struct spte *
-init_file_spte (struct hash *spt, void *_page_addr, struct file *_file, off_t _ofs, uint32_t _read_bytes, uint32_t _zero_bytes, bool _isWritable)
+spte_init_file(struct hash *spt, void *_page_addr, struct file *_file, off_t _ofs, uint32_t _read_bytes, uint32_t _zero_bytes, bool _isWritable)
 {
   struct spte *e;
   
@@ -178,11 +180,11 @@ get_spte (struct hash *spt, void *page_addr)
 }
 
 static unsigned
-spt_hash_func (const struct hash_elem *elem, void *aux)
+make_spt_hash (const struct hash_elem *elem, void *aux)
 {
-  struct spte *p = hash_entry(elem, struct spte, hash_elem);
+  //struct spte *p = hash_entry(elem, struct spte, hash_elem);
 
-  return hash_bytes (&p->page_addr, sizeof (p->frame_addr));
+  return hash_bytes (&hash_entry(elem, struct spte, hash_elem)->page_addr, sizeof (hash_entry(elem, struct spte, hash_elem)->frame_addr));
 }
 
 static bool 

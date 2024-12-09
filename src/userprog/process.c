@@ -247,7 +247,7 @@ process_exit (void)
     sys_munmap(i);
   }
 
-  destroy_spt(&cur->spt);
+  free_spt_(&cur->spt);
 
   file_close(cur->fileExec); // 파일을 닫는다. 
 
