@@ -21,20 +21,9 @@ void swap_in(struct spte *page, void *addr)
 
     lock_acquire(&swapLock);
     
-        if (page->swap_id > bitmap_size(swapTable) || page->swap_id < 0)
-        {
-            sys_exit(-1);
-        }
-
-        if (bitmap_test(swapTable, page->swap_id) == true)
-        {
-            // This swapping slot is empty. 
-            sys_exit(-1);
-        }
-
-        bitmap_set(swapTable, page->swap_id, true);
-    
-
+    if (page->swap_id > bitmap_size(swapTable) || page->swap_id < 0 || bitmap_test(swapTable, page->swap_id))
+    {sys_exit(-1);}
+    bitmap_set(swapTable, page->swap_id, true);
     lock_release(&swapLock);
 
     for (int i = 0; i < SECTOR_NUM; i++)
@@ -45,19 +34,18 @@ void swap_in(struct spte *page, void *addr)
 
 int swap_out(void *addr)
 {
-    int id;
+    int tmp;
 
     lock_acquire(&swapLock);
-    
-        id = bitmap_scan_and_flip(swapTable, 0, 1, true);
-    
+    tmp = bitmap_scan_and_flip(swapTable, 0, 1, true);
     lock_release(&swapLock);
 
-    for (int i = 0; i < SECTOR_NUM; ++i)
-    {
-        block_write(swapDisk, id * SECTOR_NUM + i, addr + (BLOCK_SECTOR_SIZE * i));
+    int i = 0;
+    while (i < SECTOR_NUM) {
+        block_write(swapDisk, tmp * SECTOR_NUM + i, addr + (BLOCK_SECTOR_SIZE * i));
+        i++;
     }
 
-    return id;
+    return tmp;
 }
 
