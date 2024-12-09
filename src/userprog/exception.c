@@ -5,6 +5,10 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "vm/page.h"
+#include "vm/page.c"
+#include "vm/swap.h"
+
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
@@ -128,6 +132,13 @@ page_fault (struct intr_frame *f)
   bool user;         /* True: access by user, false: access by kernel. */
   void *fault_addr;  /* Fault address. */
 
+  void *page_addr;
+  void *frame_addr;
+  void *esp;
+  struct hash *spt;
+  struct spte *spe;
+  
+
   /* Obtain faulting address, the virtual address that was
      accessed to cause the fault.  It may point to code or to
      data.  It is not necessarily the address of the instruction
@@ -148,11 +159,78 @@ page_fault (struct intr_frame *f)
   not_present = (f->error_code & PF_P) == 0;
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
-  
+
+
+  // 
+  /*
+   아래는 pg fault중 stack growth에 의한 fault의 처리를 다룬다.
+  */
+  //
+  page_addr = pg_round_down (fault_addr);
+  /*
+   fault가 발생한 VA(fault_addr)를 4KB로 round down하여 요구되는 pg의 시작주소 page_addr를 구한다.
+   = page_addr부터 pg fault가 발생함.
+
+   예시) 0x12345에서 pg fault가 발생함 -> 0x12000부터 시작되어야 함.
+   그러니까, 0x12001부터는 할당될 수 있지만, pg align되어야 하니까 할당 못한다고 치는거임.
+  */
+
+  if (is_kernel_vaddr (fault_addr) || !not_present) {sys_exit (-1);}
+  /*
+   부정한 접근인 경우 종료함. 
+   즉, 접근이 커널로의 방향이거나, not_prsnt = false = 페이지는 있지만, access가 안되는 경우임!
+  */
+   
+
+   /*
+   이제 아래부터 해야하는것? 
+   -> fault_addr에 대한 대응을 해야됨
+   */
+  spt = &thread_current()->spt;
+  /*
+  현재 스레드가 가지고 있는 page들의 목록을 모두 불러와서, 확장되기 직전 현재 가지고 있는 마지막 페이지의 주소를 가져옴.
+  그 주소에 해당하는 spte를 가져움
+  */
+  spe = get_spte(spt, page_addr);
+  /*
+   현재 스레드의 spt의 page_addr에 해당하는 spte를 가져옴.
+  */
+
+  //esp = user ? f->esp : thread_current()->esp;
+  if(user == true){
+      /* user process 에서 pg fault */
+      esp = f -> esp;
+  }else{
+      // from Kernel!
+      thread_current()->esp;
+  }
+
+
+  //if (esp - 32 <= fault_addr && PHYS_BASE - MAX_STACK_SIZE <= fault_addr) {
+  /*
+   stack은 high to low. 현재 esp - 32
+  */
+  bool isValidExtend = esp - STACK_BUFFER <= fault_addr && STACK_LIMIT <= fault_addr;
+  if (isValidExtend) {
+
+    init_spte_zero(spt, page_addr);
+  }
+
+  if (do_lazy_load (spt, page_addr)) {
+     return;
+  }
+  //
+  // 
+
+   /*
+   중복: 부정접근의 경우 강종
+   */
   /* not now */
   if(not_present || is_kernel_vaddr(fault_addr) || !user){
    sys_exit(-1);
   }
+
+
 
   /* To implement virtual memory, delete the rest of the function
      body, and replace it with code that brings in the page to

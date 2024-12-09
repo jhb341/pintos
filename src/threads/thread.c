@@ -161,6 +161,11 @@ thread_userprog_init(struct thread *t)
     sema_init(&(t->semaExec), 0);
 }
 
+void thread_mmf_init(struct thread *t)
+{
+  list_init (&t->mmf_list);
+  t->mmfCnt = 0;   
+}
 
 /* Creates a new kernel thread named NAME with the given initial
    PRIORITY, which executes FUNCTION passing AUX as the argument,
@@ -222,6 +227,9 @@ thread_create (const char *name, int priority,
   }
   t->fileCnt = 2;
   //#endif
+
+  init_spt(&t->spt);
+  thread_mmf_init(t);
 
   /* Add to run queue. */
   thread_unblock (t);
@@ -404,6 +412,64 @@ thread_get_recent_cpu (void)
   /* Not yet implemented. */
   return 0;
 }
+
+
+
+
+struct mmf *
+create_mmf (int mapping_id, struct file *f, void *start_addr)
+{
+    /* mmf 구조체 메모리 동적 할당 */
+    struct mmf *new_mmf = malloc(sizeof(*new_mmf));
+
+    /* 구조체 필드 초기화 */
+    new_mmf->id = mapping_id;
+    new_mmf->file = f;
+    new_mmf->page_addr = start_addr;
+
+    /* 현재 스레드의 보조 페이지 테이블 접근 */
+    struct hash *supp_page_table = &thread_current()->spt;
+
+    /* 매핑하려는 영역에 이미 페이지가 있는지 확인 */
+    for (uint64_t offset = 0; offset < (uint64_t)file_length(f); offset += PGSIZE) {
+        if (get_spte(supp_page_table, (uint8_t *)start_addr + offset) != NULL) {
+            /* 이미 페이지 엔트리가 존재하면 매핑 불가 */
+            return NULL;
+        }
+    }
+
+    /* 파일 전체를 페이지 단위로 매핑 */
+    for (uint64_t offset = 0; offset < (uint64_t)file_length(f); offset += PGSIZE) {
+        uint32_t bytes_to_read = (offset + PGSIZE < (uint64_t)file_length(f)) ? PGSIZE : (file_length(f) - offset);
+        init_spte_file(supp_page_table, start_addr, f, offset, bytes_to_read, PGSIZE - bytes_to_read, true);
+        start_addr = (uint8_t *)start_addr + PGSIZE; 
+    }
+
+    /* 현재 스레드의 mmf 리스트에 추가 */
+    list_push_back(&thread_current()->mmf_list, &new_mmf->mmf_list_elem);
+
+    return new_mmf;
+}
+
+
+
+struct mmf *
+get_mmf (int mmfCnt)
+{
+  struct list *l = &thread_current () -> mmf_list;
+  struct list_elem *e;
+  struct list_elem *IterStart = list_begin (l);
+  struct list_elem *IterEnd = list_end (l);
+
+  for (e = IterStart; e != IterEnd; e = list_next (e))
+  {
+    struct mmf *f = list_entry (e, struct mmf, mmf_list_elem);
+    if (f->id == mmfCnt){return f;}
+  }
+
+  return NULL;
+}
+
 
 /* Idle thread.  Executes when no other thread is ready to run.
 

@@ -8,7 +8,6 @@ typedef int mapid_t;
 
 void getArgs(void *esp, int *arg, int count);
 void syscall_init (void);
-//void exit_mem(const char *file);
 
 /* helper sys_xxxx below */
 void sys_halt (void);
@@ -24,6 +23,10 @@ int sys_write (int fd, const void *buffer, unsigned size);
 void sys_seek (int fd, unsigned position);
 unsigned sys_tell (int fd);
 void sys_close (int fd);
+
+// prjc3 mmf syscall function
+int sys_mmap(int fd, void *addr);
+int sys_munmap(int mmfCnt);
 
 
 #endif /* userprog/syscall.h */

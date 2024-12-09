@@ -15,6 +15,7 @@
 // filesys
 #include "filesys/filesys.h"
 #include "filesys/file.h"
+#include "vm/page.h"
 
 static void syscall_handler(struct intr_frame *);
 struct lock FileLock; // make file access ATOMIC
@@ -33,16 +34,6 @@ bool verify_mem_address(void *addr)
   return addr >= (void *)0x08048000 && addr < (void *)0xc0000000 ;
 }
 
-/*
-void exit_mem(const char *file)
-{
-  if(!verify_mem_address(file)){
-    sys_exit(-1);
-  }else{
-    // nothing to do..
-  }
-}
-*/
 
 void getArgs(void *esp, int *arg, int count)
 {
@@ -231,30 +222,86 @@ unsigned sys_tell(int fd)
 
 void sys_close(int fd)
 {
-  /*
-  struct file *f;
-  if(fd < thread_current()->fileCnt)
-  {
-		f = thread_current()->fileTable[fd];
-	}
-  else
-  {
-    f=NULL;
-  }
-
-  if (f==NULL)
-  {
-		return;
-	}
-  file_close(f);
-	thread_current()->fileTable[fd] = NULL;
-  */
   struct file *f = (fd < thread_current()->fileCnt) ? thread_current()->fileTable[fd] : NULL;
-
   if (f != NULL) {
     file_close(f);
     thread_current()->fileTable[fd] = NULL;
   }
+}
+
+int
+sys_mmap(int fd, void *addr) {
+    struct thread *cur = thread_current();
+    struct mmf *mmf;
+    struct file *file_thread = cur -> fileTable[fd];
+    struct file *file_access;
+
+
+    // 부정한 접근?
+    bool invalid_access = file_thread == NULL || addr == NULL || (int) addr % PGSIZE != 0;
+    if(invalid_access){return -1;}
+
+    // 작업 시작할거니까 락어콰이어
+    lock_acquire(&FileLock);
+
+    // 파일 열었는데 없으면 -1
+    file_access = file_reopen(file_thread);
+    if (file_access == NULL) {
+        lock_release(&FileLock);
+        return -1;
+    }
+
+    // 접근한 파일로 mmf 만들기
+    mmf = create_mmf(cur->mmfCnt++, file_access, addr);
+    // 만약 이상하면 -1
+    if (mmf == NULL) {
+        lock_release(&FileLock);
+        return -1;
+    }
+
+    // 다 끝내고 릴리즈
+    lock_release(&FileLock);
+
+    // 이름 반환
+    return mmf->id;
+}
+
+int
+sys_munmap(int mmfCnt) {
+    struct thread *cur = thread_current();
+    struct list_elem *e;
+    struct mmf *mmf;
+    void *page_addr;
+
+    if (mmfCnt >= cur->mmfCnt)
+        return;
+
+    for (e = list_begin(&cur->mmf_list); e != list_end(&cur->mmf_list); e = list_next(e)) {
+        mmf = list_entry(e, struct mmf, mmf_list_elem);
+        if (mmf->id == mmfCnt)
+            break;
+    }
+    if (e == list_end(&cur->mmf_list))
+        return;
+
+    page_addr = mmf->page_addr;
+
+    lock_acquire(&FileLock);
+
+    off_t ofs;
+    for (ofs = 0; ofs < file_length(mmf->file); ofs += PGSIZE) {
+        struct spte *entry = get_spte(&cur->spt, page_addr);
+        if (pagedir_is_dirty(cur->pagedir, page_addr)) {
+            void *frame_addr = pagedir_get_page(cur->pagedir, page_addr);
+            file_write_at(entry->file, frame_addr, entry->read_bytes, entry->ofs);
+        }
+        delete_and_free(&cur->spt, entry);
+        page_addr += PGSIZE;
+    }
+
+    
+    list_remove(e);
+    lock_release(&FileLock);
 }
 
 
@@ -316,6 +363,14 @@ syscall_handler(struct intr_frame *f)
   case SYS_CLOSE:
     getArgs(f->esp + 4, &argv[0], 1);
     sys_close(argv[0]);
+    break;
+  case SYS_MMAP:
+    getArgs(f->esp + 4, &argv[0], 2);
+    f->eax = sys_mmap((int) argv[0], (void *) argv[1]);
+    break;
+  case SYS_MUNMAP:
+    getArgs(f->esp + 4, &argv[0], 1);
+    sys_munmap((int) argv[0]);
     break;
   default:
     sys_exit(-1);
