@@ -414,12 +414,13 @@ thread_get_recent_cpu (void)
 }
 
 
+/*
 struct mmf *init_mmf (int id, struct file *file, void *page_addr)
 {
-  /* mmf 동적 할당으로 공간 확보 */
+  // mmf 동적 할당으로 공간 확보 
   struct mmf *mmf = (struct mmf *) malloc (sizeof *mmf);
   
-  /* mmf 내용 채우기 */
+  // mmf 내용 채우기 
   mmf->id = id;
   mmf->file = file;
   mmf->page_addr = page_addr;
@@ -444,6 +445,44 @@ struct mmf *init_mmf (int id, struct file *file, void *page_addr)
 
   return mmf;
 }
+*/
+
+struct mmf *
+create_mmf (int mapping_id, struct file *f, void *start_addr)
+{
+    /* mmf 구조체 메모리 동적 할당 */
+    struct mmf *new_mmf = malloc(sizeof(*new_mmf));
+
+    /* 구조체 필드 초기화 */
+    new_mmf->id = mapping_id;
+    new_mmf->file = f;
+    new_mmf->page_addr = start_addr;
+
+    /* 현재 스레드의 보조 페이지 테이블 접근 */
+    struct hash *supp_page_table = &thread_current()->spt;
+    int file_len = file_length(f);
+
+    /* 매핑하려는 영역에 이미 페이지가 있는지 확인 */
+    for (uint64_t offset = 0; offset < (uint64_t)file_len; offset += PGSIZE) {
+        if (get_spte(supp_page_table, (uint8_t *)start_addr + offset) != NULL) {
+            /* 이미 페이지 엔트리가 존재하면 매핑 불가 */
+            return NULL;
+        }
+    }
+
+    /* 파일 전체를 페이지 단위로 매핑 */
+    for (uint64_t offset = 0; offset < (uint64_t)file_len; offset += PGSIZE) {
+        uint32_t bytes_to_read = (offset + PGSIZE < (uint64_t)file_len) ? PGSIZE : (file_len - offset);
+        init_file_spte(supp_page_table, start_addr, f, offset, bytes_to_read, PGSIZE - bytes_to_read, true);
+        start_addr = (uint8_t *)start_addr + PGSIZE; 
+    }
+
+    /* 현재 스레드의 mmf 리스트에 추가 */
+    list_push_back(&thread_current()->mmf_list, &new_mmf->mmf_list_elem);
+
+    return new_mmf;
+}
+
 
 
 struct mmf *
@@ -455,9 +494,7 @@ get_mmf (int t_mmf_id)
   for (e = list_begin (list); e != list_end (list); e = list_next (e))
   {
     struct mmf *f = list_entry (e, struct mmf, mmf_list_elem);
-
-    if (f->id == t_mmf_id)
-      return f;
+    if (f->id == t_mmf_id){return f;}
   }
 
   return NULL;

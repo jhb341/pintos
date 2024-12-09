@@ -177,7 +177,7 @@ void thread_set_priority (int);
 int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
-struct mmf * init_mmf (int id, struct file *file, void *page_addr);
+struct mmf *create_mmf (int mapping_id, struct file *f, void *start_addr);
 struct mmf * get_mmf (int t_mmf_id);
 int thread_get_load_avg (void);
 

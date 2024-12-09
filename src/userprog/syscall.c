@@ -222,26 +222,7 @@ unsigned sys_tell(int fd)
 
 void sys_close(int fd)
 {
-  /*
-  struct file *f;
-  if(fd < thread_current()->fileCnt)
-  {
-		f = thread_current()->fileTable[fd];
-	}
-  else
-  {
-    f=NULL;
-  }
-
-  if (f==NULL)
-  {
-		return;
-	}
-  file_close(f);
-	thread_current()->fileTable[fd] = NULL;
-  */
   struct file *f = (fd < thread_current()->fileCnt) ? thread_current()->fileTable[fd] : NULL;
-
   if (f != NULL) {
     file_close(f);
     thread_current()->fileTable[fd] = NULL;
@@ -251,52 +232,54 @@ void sys_close(int fd)
 int
 sys_mmap(int fd, void *addr) {
     struct thread *t = thread_current();
-    //struct file *f = t->pcb->fd_table[fd];
     struct file *f = t->fileTable[fd];
     struct file *opened_f;
     struct mmf *mmf;
 
-    if (f == NULL)
-        return -1;
+    // 부정한 접근?
+    if(f == NULL || addr == NULL || (int) addr % PGSIZE != 0){return -1;}
 
-    if (addr == NULL || (int) addr % PGSIZE != 0)
-        return -1;
-
+    // 작업 시작할거니까 락어콰이어
     lock_acquire(&FileLock);
 
+    // 파일 열었는데 없으면 -1
     opened_f = file_reopen(f);
     if (opened_f == NULL) {
         lock_release(&FileLock);
         return -1;
     }
 
-    mmf = init_mmf(t->t_mmf_id++, opened_f, addr);
+    // 접근한 파일로 mmf 만들기
+    mmf = create_mmf(t->t_mmf_id++, opened_f, addr);
+    // 만약 이상하면 -1
     if (mmf == NULL) {
         lock_release(&FileLock);
         return -1;
     }
 
+    // 다 끝내고 릴리즈
     lock_release(&FileLock);
 
+    // 이름 반환
     return mmf->id;
 }
 
 int
 sys_munmap(int t_mmf_id) {
-    struct thread *t = thread_current();
+    struct thread *cur = thread_current();
     struct list_elem *e;
     struct mmf *mmf;
     void *page_addr;
 
-    if (t_mmf_id >= t->t_mmf_id)
+    if (t_mmf_id >= cur->t_mmf_id)
         return;
 
-    for (e = list_begin(&t->mmf_list); e != list_end(&t->mmf_list); e = list_next(e)) {
+    for (e = list_begin(&cur->mmf_list); e != list_end(&cur->mmf_list); e = list_next(e)) {
         mmf = list_entry(e, struct mmf, mmf_list_elem);
         if (mmf->id == t_mmf_id)
             break;
     }
-    if (e == list_end(&t->mmf_list))
+    if (e == list_end(&cur->mmf_list))
         return;
 
     page_addr = mmf->page_addr;
@@ -305,12 +288,12 @@ sys_munmap(int t_mmf_id) {
 
     off_t ofs;
     for (ofs = 0; ofs < file_length(mmf->file); ofs += PGSIZE) {
-        struct spte *entry = get_spte(&t->spt, page_addr);
-        if (pagedir_is_dirty(t->pagedir, page_addr)) {
-            void *frame_addr = pagedir_get_page(t->pagedir, page_addr);
+        struct spte *entry = get_spte(&cur->spt, page_addr);
+        if (pagedir_is_dirty(cur->pagedir, page_addr)) {
+            void *frame_addr = pagedir_get_page(cur->pagedir, page_addr);
             file_write_at(entry->file, frame_addr, entry->read_bytes, entry->ofs);
         }
-        delete_and_free(&t->spt, entry);
+        delete_and_free(&cur->spt, entry);
         page_addr += PGSIZE;
     }
     list_remove(e);

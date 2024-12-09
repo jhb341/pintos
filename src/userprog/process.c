@@ -22,6 +22,8 @@
 //
 //Ready to start project 3!!
 //
+#include "vm/page.h"
+
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 extern struct lock FileLock;
@@ -241,6 +243,14 @@ process_exit (void)
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
+  for(int i = 0; i < cur->t_mmf_id; i++){
+    sys_munmap(i);
+  }
+
+  destroy_spt(&cur->spt);
+
+  file_close(cur->fileExec); // 파일을 닫는다. 
+
   for(int i = 2; i < cur->fileCnt; i++)
   {
     sys_close(i);
@@ -248,7 +258,7 @@ process_exit (void)
 	
   // 이제 전부 해제
   palloc_free_page(cur->fileTable); // 스레드가 가지고 있던 테이블 해제
-  file_close(cur->fileExec); // 파일을 닫는다. 
+ 
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
