@@ -75,6 +75,7 @@ setup_stack (void **esp)
 ```
 
 위의 setup_stack 함수에서 기존에는 palloc 을 사용해서 kernel virtual page 를 생성했다면, 이제는 falloc 을 사용해서 할당 및 해제해주었다. falloc 관련 함수는 아래에서 설명할 예정이다. 
+(질문) 왜 이렇게 수정했는지 이유 추가 필요해보임 
 
 ```
 void *
@@ -126,6 +127,7 @@ falloc_free_page (void *kpage)
 ```
 
 위의 setup_stack 함수에서 만약 install_page 가 실패하면 falloc 해준 kpage 를 free 해주어야한다. 위의 함수를 보면 먼저, kpage 를 갖는 frame table entry 를 찾아와 (get_fte 함수 호출), 먼저, list_elem 에서 remove 해준다. 그리고, palloc_free_page 함수를 사용해 해당 kpage 를 free 해주고, 마지막으로, pagedir_clear_page 함수를 통해 kpage -> upage 접근을 막도록 하였다. 마지막으로 fte 를 free 해주었다. 이때, frame_table 에 대한 atomic 접근을 보장하기 위해 frame_lock 을 사용하였다. 
+(질문) 왜 이렇게 수정했는지 이유 추가 필요해보임 
 
 ```
 struct fte *
@@ -563,17 +565,28 @@ stack growth 는 page fault 가 발생했을 때 실행된다. 먼저 pg_round_d
 ### Implementation & Improvement from the previous design
 
 ```
+// ./threads/thread.h
+struct mmf 
+  {
+    int id;                         /* mmf의 이름 */
+    struct file* file;              /* file pointer */   
+    struct list_elem mmf_list_elem; /* list에 걸어놓을 엘레멘트 */
+    void *upage;                    /* 어느 VA에 연결? */
+  };
+```
+
+memory mapped file 구조체를 새롭게 정의하였다. 해당 구조체 안에는 memory mapped file 의 unique id, 해당 구조체가 가리키는 file, 각 thread 의 mmf 들을 list 형태로 저장한 mmf_list_elem, 그리고 mmf 에 대응되는 user page 를 갖고 있다. 
+
+```
 struct thread
   {
    ...
-    /* for PRJC3 */
-    struct hash spt;
-    void *esp;
-
     int mapid; /* 이 스레드가 얼마나 많은 mmf갖고 있나? */
     struct list mmf_list; /* 그 리스트 */
   };
 ```
+
+다음으로, 위에서 정의한 mmf 구조체를 각 thread 의 element 로 정의해주었다. mapid 는 현재 이 thread 가 갖고 있는 mmf 의 수, 즉, mmf_list_elem 의 사이즈를 갖고 있다. 그리고 mmf_list 를 list 형태로 mmf 를 저장한다.  
 
 ```
 // ./threads/thread.c
@@ -588,11 +601,183 @@ thread_create (const char *name, int priority,
 }
 ```
 
+이렇게 생성한 mmf를 초기화해주기 위해서 thread_create 함수에서 list_init 함수를 통해 mmf_list 리스트를 초기화하고 mapid 를 0으로 초기화해주었다. 
+
+```
+// ./threads/thread.c
+struct mmf *
+init_mmf (int id, struct file *file, void *upage)
+{
+  struct mmf *mmf = (struct mmf *) malloc (sizeof *mmf);
+  
+  mmf->id = id;
+  mmf->file = file;
+  mmf->upage = upage;
+
+  off_t ofs;
+
+  int size = file_length (file);
+  struct hash *spt = &thread_current ()->spt;
+
+  for (ofs = 0; ofs < size; ofs += PGSIZE)
+    if (get_spte (spt, upage + ofs))
+      return NULL;
+
+  for (ofs = 0; ofs < size; ofs += PGSIZE)
+  {
+    uint32_t read_bytes = ofs + PGSIZE < size ? PGSIZE : size - ofs;
+    init_file_spte (spt, upage, file, ofs, read_bytes, PGSIZE - read_bytes, true);
+    upage += PGSIZE;
+  }
+
+  list_push_back (&thread_current ()->mmf_list, &mmf->mmf_list_elem);
+
+  return mmf;
+}
+```
+
+다음으로, 앞서 설명한 mmf 구조체를 초기화해주기 위해 init_mmf 함수를 추가해주었다. 먼저, mmf 구조를 malloc 을 사용해 동적 할당해준 다음 init_mmf 함수의 인자로 받아온 id, file, upage 를 각각 매핑해주었다. 
+
+(질문) for loop 두개 설명 추가 필요 
+
+```
+// ./threads/thread.c
+struct mmf *
+get_mmf (int mapid)
+{
+  struct list *list = &thread_current ()->mmf_list;
+  struct list_elem *e;
+
+  for (e = list_begin (list); e != list_end (list); e = list_next (e))
+  {
+    struct mmf *f = list_entry (e, struct mmf, mmf_list_elem);
+
+    if (f->id == mapid)
+      return f;
+  }
+
+  return NULL;
+}
+```
+
+(질문) 이거 어디서 씀?? 
+
+```
+// ./userprog/syscall.c
+
+static void
+syscall_handler(struct intr_frame *f)
+{
+  if(verify_mem_address(f->esp)){
+    int argv[3];
+    switch (*(uint32_t *)(f->esp))
+    {
+      ...
+      case SYS_MMAP:
+        getArgs(f->esp, &argv[0], 2);
+        f->eax = sys_mmap((int) argv[0], (void *) argv[1]);
+        break;
+      case SYS_MUNMAP:
+        getArgs(f->esp, &argv[0], 1);
+        sys_munmap((int) argv[0]);
+        break;
+  ...
+}
+```
+
+이런 file memory mapping 은 syscall_handler 에서 실행된다. 각각 mapping 과정과 unmapping 과정을 syscall_handler switch case 에 추가하였다. 각각 과정에서 사용된 sys_mmap 함수와 sys_munmap 과정은 아래에서 설명할 예정이다. 
+
+```
+// ./userprog/syscall.c
+
+int 
+sys_mmap (int fd, void *addr)
+{
+  struct thread *t = thread_current ();
+
+  struct file *f = t->fileTable[fd];
+  struct file *opened_f;
+  struct mmf *mmf;
+
+  if (f == NULL)
+    return -1;
+  
+  if (addr == NULL || (int) addr % PGSIZE != 0)
+    return -1;
+
+  lock_acquire (&FileLock);
+
+  opened_f = file_reopen (f);
+  if (opened_f == NULL)
+  {
+    lock_release (&FileLock);
+    return -1;
+  }
+
+  mmf = init_mmf (t->mapid++, opened_f, addr);
+  if (mmf == NULL)
+  {
+    lock_release (&FileLock);
+    return -1;
+  }
+
+  lock_release (&FileLock);
+
+  return mmf->id;
+}
+```
+
+sys_mmap 함수는 fd (file descriptor) 와 addr(address) 를 인자로 받아오며, 파일을 메모리에 매핑하는 역할을 한다. file 에 접근하기 때문에 file_lock 을 사용해 atomic 하게 진행하였고, file_reopen 함수를 이용해 file 을 열었다. 그리고 이렇게 open 된 파일을 바탕으로 init_mmf 함수를 사용해 mmf 를 생성하였다. 
+
+```
+// ./userprog/syscall.c
+
+int 
+sys_munmap (int mapid)
+{
+  struct thread *t = thread_current ();
+  struct list_elem *e;
+  struct mmf *mmf;
+  void *upage;
+
+  if (mapid >= t->mapid)
+    return;
+
+  for (e = list_begin (&t->mmf_list); e != list_end (&t->mmf_list); e = list_next (e))
+  {
+    mmf = list_entry (e, struct mmf, mmf_list_elem);
+    if (mmf->id == mapid)
+      break;
+  }
+  if (e == list_end (&t->mmf_list))
+    return;
+
+  upage = mmf->upage;
+
+  lock_acquire (&FileLock);
+  
+  off_t ofs;
+  for (ofs = 0; ofs < file_length (mmf->file); ofs += PGSIZE)
+  {
+    struct spte *entry = get_spte (&t->spt, upage);
+    if (pagedir_is_dirty (t->pagedir, upage))
+    {
+      void *kpage = pagedir_get_page (t->pagedir, upage);
+      file_write_at (entry->file, kpage, entry->read_bytes, entry->ofs);
+    }
+    page_delete (&t->spt, entry);
+    upage += PGSIZE;
+  }
+  list_remove(e);
+
+  lock_release (&FileLock);
+}
+```
+
+
 ### Difference from design report
 
-#### Blueprint (Proposal)
-
-##### Data Structure
+#### 디자인 레포트 내용 (참고)
 
 File memory mapping(이하 FMM)은 여러 개의 매핑을 동시에 관리해야 하므로, 현재 관리 중인 모든 FMM을 `FMMList`라는 리스트에 저장한다. 이 리스트는 각 개별 FMM을 연결하는 list_elem을 포함하며, 각 FMM은 고유한 데이터 구조로 선언된다. 이를 위해 `FMM` 구조체를 정의하고, 다음과 같은 필드를 포함한다.
 
@@ -605,8 +790,6 @@ struct FMM {
 ```
 
 이러한 FMM 정보는 프로세스별로 관리되므로, `thread` 구조체에 FMM 리스트를 추가하여 해당 프로세스의 모든 매핑 정보를 추적할 수 있도록 한다.
-
-##### Pseudo Code or Algorithm
 
 File memory mapping 관리 알고리즘은 다음의 syscall 함수들을 통해 구현된다:
 
@@ -621,7 +804,7 @@ File memory mapping 관리 알고리즘은 다음의 syscall 함수들을 통해
 ```
 ./vm/frame.c
 
-static struct fte *clock_cursor; /* fte에서 어떤 frame을 evict해야하나? (가르키는 대상이 fte이므로 type도 fte)*/
+static struct fte *clock_cursor; 
 ```
 
 ```
@@ -680,10 +863,78 @@ void evict_page() {
 }
 ```
 
-### Difference from design report
-#### Blueprint (Proposal)
+```
+#include "vm/swap.h"
+#include "threads/synch.h"
 
-##### Data Structure
+#define SECTOR_NUM (PGSIZE / BLOCK_SECTOR_SIZE)
+
+static struct bitmap *swap_valid_table; /* 디스크와 대응됨 */
+static struct block *swap_disk;
+static struct lock swap_lock;
+
+void init_swap_valid_table()
+{
+    swap_disk = block_get_role(BLOCK_SWAP);
+    swap_valid_table = bitmap_create(block_size(swap_disk) / SECTOR_NUM);
+
+    bitmap_set_all(swap_valid_table, true);
+    lock_init(&swap_lock);
+}
+
+void swap_in(struct spte *page, void *kva)
+{
+    int i;
+    int id = page->swap_id;
+
+    lock_acquire(&swap_lock);
+    {
+        if (id > bitmap_size(swap_valid_table) || id < 0)
+        {
+            sys_exit(-1);
+        }
+
+        if (bitmap_test(swap_valid_table, id) == true)
+        {
+            /* This swapping slot is empty. */
+            sys_exit(-1);
+        }
+
+        bitmap_set(swap_valid_table, id, true);
+    }
+
+    lock_release(&swap_lock);
+
+    for (i = 0; i < SECTOR_NUM; i++)
+    {
+        block_read(swap_disk, id * SECTOR_NUM + i, kva + (i * BLOCK_SECTOR_SIZE));
+    }
+}
+
+int swap_out(void *kva)
+{
+    int i;
+    int id;
+
+    lock_acquire(&swap_lock);
+    {
+        id = bitmap_scan_and_flip(swap_valid_table, 0, 1, true);
+    }
+    lock_release(&swap_lock);
+
+    for (i = 0; i < SECTOR_NUM; ++i)
+    {
+        block_write(swap_disk, id * SECTOR_NUM + i, kva + (BLOCK_SECTOR_SIZE * i));
+    }
+
+    return id;
+}
+```
+
+
+
+### Difference from design report
+#### design report 참고 
 
 Swap 영역의 사용 여부를 추적하기 위해 bitmap을 사용하며, 이를 swap_table로 정의한다. 특정 bit가 1로 설정된 경우 해당 영역이 swap-out 가능하다는 것을 의미하도록 한다. 이 외에도 disk와 swap 작업의 동기화를 관리하기 위해 다음과 같은 구조체를 사용한다.
 
@@ -700,8 +951,6 @@ struct swap_disk {
 
 struct lock swap_lock;       // Swap 작업 동기화
 ```
-
-##### Pseudo Code or Algorithm
 
 Swap-in과 Swap-out 각각의 동작을 다음과 같이 정의한다:
 
