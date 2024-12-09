@@ -37,6 +37,8 @@
 #include "filesys/filesys.h"
 #include "filesys/fsutil.h"
 #endif
+#include "vm/frame.h"
+#include "vm/page.h"
 
 /* Page directory with kernel mappings only. */
 uint32_t *init_page_dir;
@@ -127,6 +129,7 @@ main (void)
   filesys_init (format_filesys);
 #endif
 
+  init_swap_valid_table();
   init_Lock_and_Table();
   printf ("Boot complete.\n");
   

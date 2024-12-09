@@ -30,15 +30,15 @@ typedef int tid_t;
 #define PRI_MAX 63                      /* Highest priority. */
 
 /* 
-   mmf에 대한 구조체 선언
+   mmf에 대한 구조체 선언.
+   mmf는 thread의 슬레이브
 */
 struct mmf 
 {
-   int id;
-   struct file* file;
-   struct list_elem mmf_list_elem;
-    
-   void *page_addr;
+   int id;                          /* 이름 */
+   struct file* file;               /* 무슨 파일에 해당하는지? */
+   struct list_elem mmf_list_elem;  /* 마스터 스레드가 갖는 mmf리스트에 끼울 elem */
+   void *page_addr;                 /* mapping된 VA */
 };
 
 /* A kernel thread or user process.
@@ -132,12 +132,14 @@ struct thread
     struct hash spt;
     void *esp;
 
-    struct list mmf_list;
-    int mapid;
+    struct list mmf_list; // 슬레이브 mmf 리스트
+    int t_mmf_id;            // 스레드 mmf id
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
   };
+
+   void thread_mmf_init(struct thread *t);
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
@@ -176,7 +178,7 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 struct mmf * init_mmf (int id, struct file *file, void *page_addr);
-struct mmf * get_mmf (int mapid);
+struct mmf * get_mmf (int t_mmf_id);
 int thread_get_load_avg (void);
 
 #endif /* threads/thread.h */

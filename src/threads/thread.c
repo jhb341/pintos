@@ -161,6 +161,11 @@ thread_userprog_init(struct thread *t)
     sema_init(&(t->semaExec), 0);
 }
 
+void thread_mmf_init(struct thread *t)
+{
+  list_init (&t->mmf_list);
+  t->t_mmf_id = 0;   
+}
 
 /* Creates a new kernel thread named NAME with the given initial
    PRIORITY, which executes FUNCTION passing AUX as the argument,
@@ -224,9 +229,7 @@ thread_create (const char *name, int priority,
   //#endif
 
   init_spt(&t->spt);
-
-  list_init (&t->mmf_list);
-  t->mapid = 0;             
+  thread_mmf_init(t);
 
   /* Add to run queue. */
   thread_unblock (t);
@@ -410,16 +413,18 @@ thread_get_recent_cpu (void)
   return 0;
 }
 
-struct mmf *
-init_mmf (int id, struct file *file, void *page_addr)
+
+struct mmf *init_mmf (int id, struct file *file, void *page_addr)
 {
+  /* mmf 동적 할당으로 공간 확보 */
   struct mmf *mmf = (struct mmf *) malloc (sizeof *mmf);
   
+  /* mmf 내용 채우기 */
   mmf->id = id;
   mmf->file = file;
   mmf->page_addr = page_addr;
 
-  //off_t ofs;
+
   uint64_t ofs;
   int size = file_length (file);
   struct hash *spt = &thread_current ()->spt;
@@ -439,8 +444,10 @@ init_mmf (int id, struct file *file, void *page_addr)
 
   return mmf;
 }
+
+
 struct mmf *
-get_mmf (int mapid)
+get_mmf (int t_mmf_id)
 {
   struct list *list = &thread_current ()->mmf_list;
   struct list_elem *e;
@@ -449,7 +456,7 @@ get_mmf (int mapid)
   {
     struct mmf *f = list_entry (e, struct mmf, mmf_list_elem);
 
-    if (f->id == mapid)
+    if (f->id == t_mmf_id)
       return f;
   }
 

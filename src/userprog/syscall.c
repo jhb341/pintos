@@ -270,7 +270,7 @@ sys_mmap(int fd, void *addr) {
         return -1;
     }
 
-    mmf = init_mmf(t->mapid++, opened_f, addr);
+    mmf = init_mmf(t->t_mmf_id++, opened_f, addr);
     if (mmf == NULL) {
         lock_release(&FileLock);
         return -1;
@@ -282,18 +282,18 @@ sys_mmap(int fd, void *addr) {
 }
 
 int
-sys_munmap(int mapid) {
+sys_munmap(int t_mmf_id) {
     struct thread *t = thread_current();
     struct list_elem *e;
     struct mmf *mmf;
     void *page_addr;
 
-    if (mapid >= t->mapid)
+    if (t_mmf_id >= t->t_mmf_id)
         return;
 
     for (e = list_begin(&t->mmf_list); e != list_end(&t->mmf_list); e = list_next(e)) {
         mmf = list_entry(e, struct mmf, mmf_list_elem);
-        if (mmf->id == mapid)
+        if (mmf->id == t_mmf_id)
             break;
     }
     if (e == list_end(&t->mmf_list))
