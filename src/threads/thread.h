@@ -38,7 +38,7 @@ struct mmf
    struct file* file;
    struct list_elem mmf_list_elem;
     
-   void *upage;
+   void *page_addr;
 };
 
 /* A kernel thread or user process.
@@ -175,7 +175,7 @@ void thread_set_priority (int);
 int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
-struct mmf * init_mmf (int id, struct file *file, void *upage);
+struct mmf * init_mmf (int id, struct file *file, void *page_addr);
 struct mmf * get_mmf (int mapid);
 int thread_get_load_avg (void);
 

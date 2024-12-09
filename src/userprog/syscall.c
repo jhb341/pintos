@@ -286,7 +286,7 @@ sys_munmap(int mapid) {
     struct thread *t = thread_current();
     struct list_elem *e;
     struct mmf *mmf;
-    void *upage;
+    void *page_addr;
 
     if (mapid >= t->mapid)
         return;
@@ -299,19 +299,19 @@ sys_munmap(int mapid) {
     if (e == list_end(&t->mmf_list))
         return;
 
-    upage = mmf->upage;
+    page_addr = mmf->page_addr;
 
     lock_acquire(&FileLock);
 
     off_t ofs;
     for (ofs = 0; ofs < file_length(mmf->file); ofs += PGSIZE) {
-        struct spte *entry = get_spte(&t->spt, upage);
-        if (pagedir_is_dirty(t->pagedir, upage)) {
-            void *kpage = pagedir_get_page(t->pagedir, upage);
-            file_write_at(entry->file, kpage, entry->read_bytes, entry->ofs);
+        struct spte *entry = get_spte(&t->spt, page_addr);
+        if (pagedir_is_dirty(t->pagedir, page_addr)) {
+            void *frame_addr = pagedir_get_page(t->pagedir, page_addr);
+            file_write_at(entry->file, frame_addr, entry->read_bytes, entry->ofs);
         }
         page_delete(&t->spt, entry);
-        upage += PGSIZE;
+        page_addr += PGSIZE;
     }
     list_remove(e);
 

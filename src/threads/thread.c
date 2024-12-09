@@ -411,13 +411,13 @@ thread_get_recent_cpu (void)
 }
 
 struct mmf *
-init_mmf (int id, struct file *file, void *upage)
+init_mmf (int id, struct file *file, void *page_addr)
 {
   struct mmf *mmf = (struct mmf *) malloc (sizeof *mmf);
   
   mmf->id = id;
   mmf->file = file;
-  mmf->upage = upage;
+  mmf->page_addr = page_addr;
 
   //off_t ofs;
   uint64_t ofs;
@@ -425,14 +425,14 @@ init_mmf (int id, struct file *file, void *upage)
   struct hash *spt = &thread_current ()->spt;
 
   for (ofs = 0; ofs < size; ofs += PGSIZE)
-    if (get_spte (spt, upage + ofs))
+    if (get_spte (spt, page_addr + ofs))
       return NULL;
 
   for (ofs = 0; ofs < size; ofs += PGSIZE)
   {
     uint32_t read_bytes = ofs + PGSIZE < size ? PGSIZE : size - ofs;
-    init_file_spte (spt, upage, file, ofs, read_bytes, PGSIZE - read_bytes, true);
-    upage += PGSIZE;
+    init_file_spte (spt, page_addr, file, ofs, read_bytes, PGSIZE - read_bytes, true);
+    page_addr += PGSIZE;
   }
 
   list_push_back (&thread_current ()->mmf_list, &mmf->mmf_list_elem);

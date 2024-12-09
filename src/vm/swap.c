@@ -5,7 +5,7 @@
 
 static struct bitmap *swap_valid_table;
 static struct block *swap_disk;
-static struct lock swap_lock;
+static struct lock swapLock;
 
 void init_swap_valid_table()
 {
@@ -13,7 +13,7 @@ void init_swap_valid_table()
     swap_valid_table = bitmap_create(block_size(swap_disk) / SECTOR_NUM);
 
     bitmap_set_all(swap_valid_table, true);
-    lock_init(&swap_lock);
+    lock_init(&swapLock);
 }
 
 
@@ -22,7 +22,7 @@ void swap_in(struct spte *page, void *kva)
     int i;
     int id = page->swap_id;
 
-    lock_acquire(&swap_lock);
+    lock_acquire(&swapLock);
     {
         if (id > bitmap_size(swap_valid_table) || id < 0)
         {
@@ -38,7 +38,7 @@ void swap_in(struct spte *page, void *kva)
         bitmap_set(swap_valid_table, id, true);
     }
 
-    lock_release(&swap_lock);
+    lock_release(&swapLock);
 
     for (i = 0; i < SECTOR_NUM; i++)
     {
@@ -51,11 +51,11 @@ int swap_out(void *kva)
     int i;
     int id;
 
-    lock_acquire(&swap_lock);
+    lock_acquire(&swapLock);
     {
         id = bitmap_scan_and_flip(swap_valid_table, 0, 1, true);
     }
-    lock_release(&swap_lock);
+    lock_release(&swapLock);
 
     for (i = 0; i < SECTOR_NUM; ++i)
     {

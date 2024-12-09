@@ -132,8 +132,8 @@ page_fault (struct intr_frame *f)
   bool user;         /* True: access by user, false: access by kernel. */
   void *fault_addr;  /* Fault address. */
 
-  void *upage;
-  void *kpage;
+  void *page_addr;
+  void *frame_addr;
   void *esp;
   struct hash *spt;
   struct spte *spe;
@@ -166,10 +166,10 @@ page_fault (struct intr_frame *f)
    아래는 pg fault중 stack growth에 의한 fault의 처리를 다룬다.
   */
   //
-  upage = pg_round_down (fault_addr);
+  page_addr = pg_round_down (fault_addr);
   /*
-   fault가 발생한 VA(fault_addr)를 4KB로 round down하여 요구되는 pg의 시작주소 upage를 구한다.
-   = upage부터 pg fault가 발생함.
+   fault가 발생한 VA(fault_addr)를 4KB로 round down하여 요구되는 pg의 시작주소 page_addr를 구한다.
+   = page_addr부터 pg fault가 발생함.
 
    예시) 0x12345에서 pg fault가 발생함 -> 0x12000부터 시작되어야 함.
    그러니까, 0x12001부터는 할당될 수 있지만, pg align되어야 하니까 할당 못한다고 치는거임.
@@ -183,19 +183,19 @@ page_fault (struct intr_frame *f)
    
 
   spt = &thread_current()->spt;
-  spe = get_spte(spt, upage);
+  spe = get_spte(spt, page_addr);
   /*
-   현재 스레드의 spt의 upage에 해당하는 spte를 가져옴.
+   현재 스레드의 spt의 page_addr에 해당하는 spte를 가져옴.
   */
 
   esp = user ? f->esp : thread_current()->esp;
   if (esp - 32 <= fault_addr && PHYS_BASE - MAX_STACK_SIZE <= fault_addr) {
-    if (!get_spte(spt, upage)) {
-      init_zero_spte (spt, upage);
+    if (!get_spte(spt, page_addr)) {
+      init_zero_spte (spt, page_addr);
     }
   }
 
-  if (load_page (spt, upage)) {
+  if (load_page (spt, page_addr)) {
      return;
   }
   //

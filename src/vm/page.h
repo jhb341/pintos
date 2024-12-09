@@ -12,8 +12,8 @@
 
 struct spte
   {
-    void *upage;
-    void *kpage;
+    void *page_addr;
+    void *frame_addr;
   
     struct hash_elem hash_elem;
   

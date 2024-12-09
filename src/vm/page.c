@@ -24,13 +24,13 @@ destroy_spt (struct hash *spt)
 }
 
 void
-init_spte (struct hash *spt, void *upage, void *kpage)
+init_spte (struct hash *spt, void *page_addr, void *frame_addr)
 {
   struct spte *e;
   e = (struct spte *) malloc (sizeof *e);
   
-  e->upage = upage;
-  e->kpage = kpage;
+  e->page_addr = page_addr;
+  e->frame_addr = frame_addr;
   
   e->status = PAGE_FRAME;
   
@@ -38,13 +38,13 @@ init_spte (struct hash *spt, void *upage, void *kpage)
 }
 
 void
-init_zero_spte (struct hash *spt, void *upage)
+init_zero_spte (struct hash *spt, void *page_addr)
 {
   struct spte *e;
   e = (struct spte *) malloc (sizeof *e);
   
-  e->upage = upage;
-  e->kpage = NULL;
+  e->page_addr = page_addr;
+  e->frame_addr = NULL;
   
   e->status = PAGE_ZERO;
   
@@ -55,13 +55,13 @@ init_zero_spte (struct hash *spt, void *upage)
 }
 
 void
-init_frame_spte (struct hash *spt, void *upage, void *kpage)
+init_frame_spte (struct hash *spt, void *page_addr, void *frame_addr)
 {
   struct spte *e;
   e = (struct spte *) malloc (sizeof *e);
 
-  e->upage = upage;
-  e->kpage = kpage;
+  e->page_addr = page_addr;
+  e->frame_addr = frame_addr;
   
   e->status = PAGE_FRAME;
 
@@ -72,14 +72,14 @@ init_frame_spte (struct hash *spt, void *upage, void *kpage)
 }
 
 struct spte *
-init_file_spte (struct hash *spt, void *_upage, struct file *_file, off_t _ofs, uint32_t _read_bytes, uint32_t _zero_bytes, bool _writable)
+init_file_spte (struct hash *spt, void *_page_addr, struct file *_file, off_t _ofs, uint32_t _read_bytes, uint32_t _zero_bytes, bool _writable)
 {
   struct spte *e;
   
   e = (struct spte *)malloc (sizeof *e);
 
-  e->upage = _upage;
-  e->kpage = NULL;
+  e->page_addr = _page_addr;
+  e->frame_addr = NULL;
   
   e->file = _file;
   e->ofs = _ofs;
@@ -101,18 +101,18 @@ init_file_spte (struct hash *spt, void *_upage, struct file *_file, off_t _ofs, 
     ..
 */
 bool
-load_page (struct hash *spt, void *upage)
+load_page (struct hash *spt, void *page_addr)
 {
   struct spte *e;
   uint32_t *pagedir;
-  void *kpage;
+  void *frame_addr;
 
-  e = get_spte (spt, upage);
+  e = get_spte (spt, page_addr);
   if (e == NULL)
     sys_exit (-1);
 
-  kpage = falloc_get_page (PAL_USER, upage);
-  if (kpage == NULL)
+  frame_addr = falloc_get_page (PAL_USER, page_addr);
+  if (frame_addr == NULL)
     sys_exit (-1);
 
   bool was_holding_lock = lock_held_by_current_thread (&FileLock);
@@ -120,24 +120,24 @@ load_page (struct hash *spt, void *upage)
   switch (e->status)
   {
   case PAGE_ZERO:
-    memset (kpage, 0, PGSIZE);
+    memset (frame_addr, 0, PGSIZE);
     break;
   case PAGE_SWAP:
-    swap_in(e, kpage);
+    swap_in(e, frame_addr);
   
     break;
   case PAGE_FILE:
     if (!was_holding_lock)
       lock_acquire (&FileLock);
     
-    if (file_read_at (e->file, kpage, e->read_bytes, e->ofs) != e->read_bytes)
+    if (file_read_at (e->file, frame_addr, e->read_bytes, e->ofs) != e->read_bytes)
     {
-      falloc_free_page (kpage);
+      falloc_free_page (frame_addr);
       lock_release (&FileLock);
       sys_exit (-1);
     }
     
-    memset (kpage + e->read_bytes, 0, e->zero_bytes);
+    memset (frame_addr + e->read_bytes, 0, e->zero_bytes);
     if (!was_holding_lock)
       lock_release (&FileLock);
 
@@ -149,25 +149,25 @@ load_page (struct hash *spt, void *upage)
     
   pagedir = thread_current ()->pagedir;
 
-  if (!pagedir_set_page (pagedir, upage, kpage, e->writable))
+  if (!pagedir_set_page (pagedir, page_addr, frame_addr, e->writable))
   {
-    falloc_free_page (kpage);
+    falloc_free_page (frame_addr);
     sys_exit (-1);
   }
 
-  e->kpage = kpage;
+  e->frame_addr = frame_addr;
   e->status = PAGE_FRAME;
 
   return true;
 }
 
 struct spte *
-get_spte (struct hash *spt, void *upage)
+get_spte (struct hash *spt, void *page_addr)
 {
   struct spte e;
   struct hash_elem *elem;
 
-  e.upage = upage;
+  e.page_addr = page_addr;
   elem = hash_find (spt, &e.hash_elem);
 
   return elem != NULL ? hash_entry (elem, struct spte, hash_elem) : NULL;
@@ -178,16 +178,16 @@ spt_hash_func (const struct hash_elem *elem, void *aux)
 {
   struct spte *p = hash_entry(elem, struct spte, hash_elem);
 
-  return hash_bytes (&p->upage, sizeof (p->kpage));
+  return hash_bytes (&p->page_addr, sizeof (p->frame_addr));
 }
 
 static bool 
 spt_less_func (const struct hash_elem *a, const struct hash_elem *b, void *aux)
 {
-  void *a_upage = hash_entry (a, struct spte, hash_elem)->upage;
-  void *b_upage = hash_entry (b, struct spte, hash_elem)->upage;
+  void *a_page_addr = hash_entry (a, struct spte, hash_elem)->page_addr;
+  void *b_page_addr = hash_entry (b, struct spte, hash_elem)->page_addr;
 
-  return a_upage < b_upage;
+  return a_page_addr < b_page_addr;
 }
 
 static void

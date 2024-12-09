@@ -127,7 +127,7 @@ main (void)
   filesys_init (format_filesys);
 #endif
 
-  frame_init();
+  init_Lock_and_Table();
   printf ("Boot complete.\n");
   
   /* Run actions specified on kernel command line. */
