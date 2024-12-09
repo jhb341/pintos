@@ -727,7 +727,7 @@ sys_mmap (int fd, void *addr)
 }
 ```
 
-sys_mmap 함수는 fd (file descriptor) 와 addr(address) 를 인자로 받아오며, 파일을 메모리에 매핑하는 역할을 한다. file 에 접근하기 때문에 file_lock 을 사용해 atomic 하게 진행하였고, file_reopen 함수를 이용해 file 을 열었다. 그리고 이렇게 open 된 파일을 바탕으로 init_mmf 함수를 사용해 mmf 를 생성하였다. 
+sys_mmap 함수는 fd (file descriptor) 와 addr(address) 를 인자로 받아오며, 파일을 메모리에 매핑하는 역할을 한다. file 에 접근하기 때문에 file_lock 을 사용해 atomic 하게 진행하였고, file_reopen 함수를 이용해 복사본으로 file 을 열었다. 그리고 이렇게 복사 후 오픈 된 파일을 바탕으로 init_mmf 함수를 사용해 mmf 구조체를 초기화하고 해당 file 과 addr 를 매핑해주었다. 그리고 thread 객체의 mapid 도 1 증가시켜주었다. 
 
 ```
 // ./userprog/syscall.c
@@ -774,28 +774,13 @@ sys_munmap (int mapid)
 }
 ```
 
+먼저, for loop 를 통해 인자로 받아온 mapid 에 해당하는 mmf 를 찾고 get_spte 함수를 사용해 현재 페이지인 upage 에 해당하는 entry 를 받아온다. 그리고 pagedir_is_dirty 함수를 이용해 페이지가 수정되었는지 여부를 확인 후, 만약 수정되었다면, file_write_at 함수를 이용해 수정사항을 파일에도 기록해준다. 그리고 unmapping 해주기 위해서 page_delete 함수를 사용해 supplemental page table 에서 해당 entry 를 제거해준다. 그리고 현재 mmf 역시 list_remove 함수를 사용해 list 에서 제거해준다. 이 과정역시 file 에 접근하기 때문에 file_lock 을 사용해 atomic 하게 진행하도록 하였다. 
 
 ### Difference from design report
 
 #### 디자인 레포트 내용 (참고)
 
-File memory mapping(이하 FMM)은 여러 개의 매핑을 동시에 관리해야 하므로, 현재 관리 중인 모든 FMM을 `FMMList`라는 리스트에 저장한다. 이 리스트는 각 개별 FMM을 연결하는 list_elem을 포함하며, 각 FMM은 고유한 데이터 구조로 선언된다. 이를 위해 `FMM` 구조체를 정의하고, 다음과 같은 필드를 포함한다.
-
-```c
-struct FMM {
-    int fmm_id;                  // 고유 ID
-    struct file *f;              // 매핑된 파일 포인터
-    struct list_elem FMM_elem;   // FMMList와 연결하는 필드
-};
-```
-
-이러한 FMM 정보는 프로세스별로 관리되므로, `thread` 구조체에 FMM 리스트를 추가하여 해당 프로세스의 모든 매핑 정보를 추적할 수 있도록 한다.
-
-File memory mapping 관리 알고리즘은 다음의 syscall 함수들을 통해 구현된다:
-
-- `sys_mmap` : 특정 파일을 메모리에 매핑한다. 요청된 파일에 대해 새로운 FMM 구조체를 생성하고, 해당 구조체를 `FMMList`에 추가한다. 이를 통해 특정 프로세스가 접근하는 모든 FMM을 효율적으로 관리할 수 있다.  
-- `sys_munmap` : 매핑된 파일의 메모리 매핑을 해제한다. `sys_mmap`에 의해 생성된 FMM을 해제하기 위해 `FMMList`를 순회하면서 매핑된 FMM 구조체를 찾고, 이를 할당 해제한다.  
-
+기존의 디자인 레포트에서는 mmf 에 upage 에 대한 내용을 저장하지 않았다. 하지만 해당 파일이 어떤 physical memory 에 매핑되는지를 저장하기 위해서 upage 라는 element 를 추가해주었다. 그리고 syscall d을 통해 mapping 과 unmapping 하는 것을 구상하였는데 이에 추가하여 mmf 구조체를 초기화해주는 함수를 추가하였다. 
 
 ### 6. Swap table
 
@@ -805,9 +790,7 @@ File memory mapping 관리 알고리즘은 다음의 syscall 함수들을 통해
 ./vm/frame.c
 
 static struct fte *clock_cursor; 
-```
 
-```
 void
 frame_init ()
 {
