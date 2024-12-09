@@ -40,7 +40,7 @@ init_spte (struct hash *spt, void *page_addr, void *frame_addr)
 }
 
 void
-init_zero_spte (struct hash *spt, void *page_addr)
+init_spte_zero (struct hash *spt, void *page_addr)
 {
   struct spte *e;
   e = (struct spte *) malloc (sizeof *e);
@@ -57,7 +57,7 @@ init_zero_spte (struct hash *spt, void *page_addr)
 }
 
 void
-init_frame_spte (struct hash *spt, void *page_addr, void *frame_addr)
+init_spte_frame (struct hash *spt, void *page_addr, void *frame_addr)
 {
   struct spte *e;
   e = (struct spte *) malloc (sizeof *e);
@@ -74,24 +74,23 @@ init_frame_spte (struct hash *spt, void *page_addr, void *frame_addr)
 }
 
 struct spte *
-spte_init_file(struct hash *spt, void *_page_addr, struct file *_file, off_t _ofs, uint32_t _read_bytes, uint32_t _zero_bytes, bool _isWritable)
+init_spte_file(struct hash *s, void *_p, struct file *_f, off_t _o, uint32_t _r, uint32_t _z, bool _i)
 {
   struct spte *e;
   
   e = (struct spte *)malloc (sizeof *e);
 
-  e->page_addr = _page_addr;
+  e->page_addr = _p;
   e->frame_addr = NULL;
-  
-  e->file = _file;
-  e->ofs = _ofs;
-  e->read_bytes = _read_bytes;
-  e->zero_bytes = _zero_bytes;
-  e->isWritable = _isWritable;
+  e->file = _f;
+  e->ofs = _o;
+  e->read_bytes = _r;
+  e->zero_bytes = _z;
+  e->isWritable = _i;
   
   e->status = PAGE_FILE;
   
-  hash_insert (spt, &e->hash_elem);
+  hash_insert (s, &e->hash_elem);
   
   return e;
 }

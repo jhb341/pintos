@@ -39,12 +39,12 @@ struct spte
   };
 
 
+
+void init_spte_zero (struct hash *spt, void *page_addr);
+
+struct spte *init_spte_file (struct hash *spt, void *p_a, struct file *f, off_t os, uint32_t rb, uint32_t zb, bool flag);
+void init_spte_frame (struct hash *spt, void *page_addr, void *frame_addr);
 void init_spte (struct hash *spt, void *page_addr, void *frame_addr);
-void init_zero_spte (struct hash *spt, void *page_addr);
-void init_frame_spte (struct hash *spt, void *page_addr, void *frame_addr);
-struct spte *init_file_spte (struct hash *spt, void *p_a, struct file *f, off_t os, uint32_t rb, uint32_t zb, bool flag);
-
-
 void free_spt_ (struct hash *spt);
 void prepare_mem_page(struct spte *spte, void *frame_addr, bool flag);
 bool do_lazy_load (struct hash *, void *);
