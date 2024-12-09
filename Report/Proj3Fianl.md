@@ -437,45 +437,17 @@ page_fault (struct intr_frame *f)
 {
   ...
   page_addr = pg_round_down (fault_addr);
-  /*
-   fault가 발생한 VA(fault_addr)를 4KB로 round down하여 요구되는 pg의 시작주소 page_addr를 구한다.
-   = page_addr부터 pg fault가 발생함.
-
-   예시) 0x12345에서 pg fault가 발생함 -> 0x12000부터 시작되어야 함.
-   그러니까, 0x12001부터는 할당될 수 있지만, pg align되어야 하니까 할당 못한다고 치는거임.
-  */
 
   if (is_kernel_vaddr (fault_addr) || !not_present) {sys_exit (-1);}
-  /*
-   부정한 접근인 경우 종료함. 
-   즉, 접근이 커널로의 방향이거나, not_prsnt = false = 페이지는 있지만, access가 안되는 경우임!
-  */
    
-
-   /*
-   이제 아래부터 해야하는것? 
-   -> fault_addr에 대한 대응을 해야됨
-   */
   spt = &thread_current()->spt;
-  /*
-  현재 스레드가 가지고 있는 page들의 목록을 모두 불러와서, 확장되기 직전 현재 가지고 있는 마지막 페이지의 주소를 가져옴.
-  그 주소에 해당하는 spte를 가져움
-  */
+
   spe = get_spte(spt, page_addr);
-  /*
-   현재 스레드의 spt의 page_addr에 해당하는 spte를 가져옴.
-  */
 
   if(user == true){
       esp = f -> esp;
   }else{
-      // from Kernel!
       thread_current()->esp;
-  }
-
-  bool isValidExtend = esp - STACK_BUFFER <= fault_addr && STACK_LIMIT <= fault_addr;
-  if (isValidExtend) {
-    init_zero_spte(spt, page_addr);
   }
 
   if (load_page (spt, page_addr)) {
@@ -491,74 +463,79 @@ page_fault (struct intr_frame *f)
 extern struct lock FileLock;
 
 bool
-load_page (struct hash *spt, void *upage)
+load_page (struct hash *spt, void *page_addr)
 {
   struct spte *e;
   uint32_t *pagedir;
-  void *kpage;
-  e = get_spte (spt, upage);
-  if (e == NULL)
-    sys_exit (-1);
+  void *frame_addr;
 
-  kpage = falloc_get_page (PAL_USER, upage);
-  if (kpage == NULL)
-    sys_exit (-1);
+  e = get_spte (spt, page_addr);
+  if (e == NULL){ sys_exit (-1); }
+
+  frame_addr = falloc_get_page (PAL_USER, page_addr);
+  if (frame_addr == NULL){ sys_exit (-1); }
 
   bool was_holding_lock = lock_held_by_current_thread (&FileLock);
 
-  switch (e->status)
+  prepare_mem_page(e, frame_addr, was_holding_lock);
+    
+  pagedir = thread_current ()->pagedir;
+
+  if (!pagedir_set_page (pagedir, page_addr, frame_addr, e->isWritable))
+  {
+    falloc_free_page (frame_addr);
+    sys_exit (-1);
+  }
+
+  e->frame_addr = frame_addr;
+  e->status = PAGE_FRAME;
+
+  return true;
+}
+
+void prepare_mem_page(struct spte *spte, void *frame_addr, bool flag)
+{
+  switch (spte->status)
   {
   case PAGE_ZERO:
-    memset (kpage, 0, PGSIZE);
+    memset (frame_addr, 0, PGSIZE);
     break;
-
   case PAGE_SWAP:
-    // implement swapping  
+    swap_in(spte, frame_addr);
     break;
-
   case PAGE_FILE:
-    if (!was_holding_lock)
+    if (!flag)
       lock_acquire (&FileLock);
-    if (file_read_at (e->file, kpage, e->read_bytes, e->ofs) != e->read_bytes)
+    
+    if (file_read_at (spte->file, frame_addr, spte->read_bytes, spte->ofs) != spte->read_bytes)
     {
-      falloc_free_page (kpage);
+      falloc_free_page (frame_addr);
       lock_release (&FileLock);
       sys_exit (-1);
     }
-    memset (kpage + e->read_bytes, 0, e->zero_bytes);
-    if (!was_holding_lock)
+    memset (frame_addr + spte->read_bytes, 0, spte->zero_bytes);
+    if (!flag)
       lock_release (&FileLock);
+
     break;
 
   default:
     sys_exit (-1);
   }
-    
-  pagedir = thread_current ()->pagedir;
 
-  if (!pagedir_set_page (pagedir, upage, kpage, e->writable))
-  {
-    falloc_free_page (kpage);
-    sys_exit (-1);
-  }
-
-  e->kpage = kpage;
-  e->status = PAGE_FRAME;
-
-  return true;
 }
 ```
 
-page fault 가 났기 때문에 kpage (kernel page) 를 falloc 을 통해 새롭게 할당해준다. 그리고 switch case 를 사용하여 각 상황 (PAGE_ZERO, PAGE_SWAP, 그리고 PAGE_FILE) 각각에 대해서 처리해준다. 먼저, PAGE_ZERO 의 경우 memset 함수를 통해 해당 메모리를 0으로 초기화해준다. 그리고, PAGE_SWAP 의 경우 아래에서 설명할 swap table 과정을 통해 구현하여 아래에서 설명할 예정이다. 마지막으로 PAGE_FILE의 경우, file_read_at 함수를 통해 파일에서 데이터를 읽어와서 추가하고 memset 을 통해 나머지 영역을 0으로 초기화해주는 함수를 추가해주었다. 이때, 여러 process 에서 파일에 접근하는 것을 막기 위해서 file_lock 을 사용해 atomic 하게 구현하였다. 마지막으로, 새롭게 가져온 데이터를 기반으로 page directory 를 설정하고, supplemental page table entry 도 업데이트 해주었다.  
+page fault 가 났기 때문에 kpage (kernel page) 를 falloc 을 통해 새롭게 할당해준다. 그리고 prepare_mem_page 함수에서 switch case 를 사용하여 각 상황 (PAGE_ZERO, PAGE_SWAP, 그리고 PAGE_FILE) 각각에 대해서 처리해준다. 먼저, PAGE_ZERO 의 경우 memset 함수를 통해 해당 메모리를 0으로 초기화해준다. 그리고, PAGE_SWAP 의 경우 아래에서 설명할 swap table 과정을 통해 구현하여 아래에서 설명할 예정이다. 마지막으로 PAGE_FILE의 경우, file_read_at 함수를 통해 파일에서 데이터를 읽어와서 추가하고 memset 을 통해 나머지 영역을 0으로 초기화해주는 함수를 추가해주었다. 이때, 여러 process 에서 파일에 접근하는 것을 막기 위해서 FileLock 을 사용해 atomic 하게 구현하였다. 마지막으로, 새롭게 가져온 데이터를 기반으로 page directory 를 설정하고, supplemental page table entry 도 업데이트 해주었다.  
 
 ```
 struct spte *
-get_spte (struct hash *spt, void *upage)
+get_spte (struct hash *spt, void *page_addr)
 {
   struct spte e;
   struct hash_elem *elem;
 
-  e.upage = upage;
+  e.page_addr = page_addr;
   elem = hash_find (spt, &e.hash_elem);
 
   return elem != NULL ? hash_entry (elem, struct spte, hash_elem) : NULL;
@@ -594,18 +571,26 @@ static void
 page_fault (struct intr_frame *f) 
 {
   ...
-  upage = pg_round_down (fault_addr);
+  page_addr = pg_round_down (fault_addr);
+
+  if (is_kernel_vaddr (fault_addr) || !not_present) {sys_exit (-1);}
    
   spt = &thread_current()->spt;
-  spe = get_spte(spt, upage);
 
-  esp = user ? f->esp : thread_current()->esp;
-  if (esp - 32 <= fault_addr && PHYS_BASE - MAX_STACK_SIZE <= fault_addr) {
-    if (!get_spte(spt, upage)) {
-      init_zero_spte (spt, upage);
-    }
+  spe = get_spte(spt, page_addr);
+
+  if(user == true){
+      esp = f -> esp;
+  }else{
+      thread_current()->esp;
+  }
+
+  bool isValidExtend = esp - STACK_BUFFER <= fault_addr && STACK_LIMIT <= fault_addr;
+  if (isValidExtend) {
+    init_zero_spte(spt, page_addr);
   }
   ...
+}
 ```
 
 stack growth 는 page fault 가 발생했을 때 실행된다. 먼저 pg_round_down 함수를 사용해 페이지 크기의 배수로 내림하여 해당 주소가 속한 페이지의 시작 주소를 upage 에 할당해준다. 그리고 esp 확장 가능한지 확인하기 위해서 if 문을 사용해 컨디션을 확인한 수, init_zero_spte 를 사용해 새로운 supplemental page table entry 를 생성한 후 supplemental page table에 추가해 주었다. 
@@ -623,12 +608,12 @@ stack growth 는 page fault 가 발생했을 때 실행된다. 먼저 pg_round_d
 ```
 // ./threads/thread.h
 struct mmf 
-  {
-    int id;                         /* mmf의 이름 */
-    struct file* file;              /* file pointer */   
-    struct list_elem mmf_list_elem; /* list에 걸어놓을 엘레멘트 */
-    void *upage;                    /* 어느 VA에 연결? */
-  };
+{
+   int id;                          /* 이름 */
+   struct file* file;               /* 무슨 파일에 해당하는지? */
+   struct list_elem mmf_list_elem;  /* 마스터 스레드가 갖는 mmf리스트에 끼울 elem */
+   void *page_addr;                 /* mapping된 VA */
+};
 ```
 
 memory mapped file 구조체를 새롭게 정의하였다. 해당 구조체 안에는 memory mapped file 의 unique id, 해당 구조체가 가리키는 file, 각 thread 의 mmf 들을 list 형태로 저장한 mmf_list_elem, 그리고 mmf 에 대응되는 user page 를 갖고 있다. 
@@ -637,8 +622,8 @@ memory mapped file 구조체를 새롭게 정의하였다. 해당 구조체 안�
 struct thread
   {
    ...
-    int mapid; /* 이 스레드가 얼마나 많은 mmf갖고 있나? */
-    struct list mmf_list; /* 그 리스트 */
+    struct list mmf_list; // 슬레이브 mmf 리스트
+    int t_mmf_id;            // 스레드 mmf id
   };
 ```
 
@@ -651,9 +636,14 @@ thread_create (const char *name, int priority,
                thread_func *function, void *aux) 
 {
   ...
-  list_init (&t->mmf_list);
-  t->mapid = 0;
+  thread_mmf_init(t);
   ...
+}
+
+void thread_mmf_init(struct thread *t)
+{
+  list_init (&t->mmf_list);
+  t->t_mmf_id = 0;   
 }
 ```
 
@@ -661,29 +651,30 @@ thread_create (const char *name, int priority,
 
 ```
 // ./threads/thread.c
-struct mmf *
-init_mmf (int id, struct file *file, void *upage)
+struct mmf *init_mmf (int id, struct file *file, void *page_addr)
 {
+  /* mmf 동적 할당으로 공간 확보 */
   struct mmf *mmf = (struct mmf *) malloc (sizeof *mmf);
   
+  /* mmf 내용 채우기 */
   mmf->id = id;
   mmf->file = file;
-  mmf->upage = upage;
+  mmf->page_addr = page_addr;
 
-  off_t ofs;
 
+  uint64_t ofs;
   int size = file_length (file);
   struct hash *spt = &thread_current ()->spt;
 
   for (ofs = 0; ofs < size; ofs += PGSIZE)
-    if (get_spte (spt, upage + ofs))
+    if (get_spte (spt, page_addr + ofs))
       return NULL;
 
   for (ofs = 0; ofs < size; ofs += PGSIZE)
   {
     uint32_t read_bytes = ofs + PGSIZE < size ? PGSIZE : size - ofs;
-    init_file_spte (spt, upage, file, ofs, read_bytes, PGSIZE - read_bytes, true);
-    upage += PGSIZE;
+    init_file_spte (spt, page_addr, file, ofs, read_bytes, PGSIZE - read_bytes, true);
+    page_addr += PGSIZE;
   }
 
   list_push_back (&thread_current ()->mmf_list, &mmf->mmf_list_elem);
@@ -699,7 +690,7 @@ init_mmf (int id, struct file *file, void *upage)
 ```
 // ./threads/thread.c
 struct mmf *
-get_mmf (int mapid)
+get_mmf (int t_mmf_id)
 {
   struct list *list = &thread_current ()->mmf_list;
   struct list_elem *e;
@@ -708,7 +699,7 @@ get_mmf (int mapid)
   {
     struct mmf *f = list_entry (e, struct mmf, mmf_list_elem);
 
-    if (f->id == mapid)
+    if (f->id == t_mmf_id)
       return f;
   }
 
@@ -730,11 +721,11 @@ syscall_handler(struct intr_frame *f)
     {
       ...
       case SYS_MMAP:
-        getArgs(f->esp, &argv[0], 2);
+        getArgs(f->esp + 4, &argv[0], 2);
         f->eax = sys_mmap((int) argv[0], (void *) argv[1]);
         break;
       case SYS_MUNMAP:
-        getArgs(f->esp, &argv[0], 1);
+        getArgs(f->esp + 4, &argv[0], 1);
         sys_munmap((int) argv[0]);
         break;
   ...
@@ -746,40 +737,37 @@ syscall_handler(struct intr_frame *f)
 ```
 // ./userprog/syscall.c
 
-int 
-sys_mmap (int fd, void *addr)
-{
-  struct thread *t = thread_current ();
+int
+sys_mmap(int fd, void *addr) {
+    struct thread *t = thread_current();
+    //struct file *f = t->pcb->fd_table[fd];
+    struct file *f = t->fileTable[fd];
+    struct file *opened_f;
+    struct mmf *mmf;
 
-  struct file *f = t->fileTable[fd];
-  struct file *opened_f;
-  struct mmf *mmf;
+    if (f == NULL)
+        return -1;
 
-  if (f == NULL)
-    return -1;
-  
-  if (addr == NULL || (int) addr % PGSIZE != 0)
-    return -1;
+    if (addr == NULL || (int) addr % PGSIZE != 0)
+        return -1;
 
-  lock_acquire (&FileLock);
+    lock_acquire(&FileLock);
 
-  opened_f = file_reopen (f);
-  if (opened_f == NULL)
-  {
-    lock_release (&FileLock);
-    return -1;
-  }
+    opened_f = file_reopen(f);
+    if (opened_f == NULL) {
+        lock_release(&FileLock);
+        return -1;
+    }
 
-  mmf = init_mmf (t->mapid++, opened_f, addr);
-  if (mmf == NULL)
-  {
-    lock_release (&FileLock);
-    return -1;
-  }
+    mmf = init_mmf(t->t_mmf_id++, opened_f, addr);
+    if (mmf == NULL) {
+        lock_release(&FileLock);
+        return -1;
+    }
 
-  lock_release (&FileLock);
+    lock_release(&FileLock);
 
-  return mmf->id;
+    return mmf->id;
 }
 ```
 
@@ -788,45 +776,41 @@ sys_mmap 함수는 fd (file descriptor) 와 addr(address) 를 인자로 받아�
 ```
 // ./userprog/syscall.c
 
-int 
-sys_munmap (int mapid)
-{
-  struct thread *t = thread_current ();
-  struct list_elem *e;
-  struct mmf *mmf;
-  void *upage;
+int
+sys_munmap(int t_mmf_id) {
+    struct thread *t = thread_current();
+    struct list_elem *e;
+    struct mmf *mmf;
+    void *page_addr;
 
-  if (mapid >= t->mapid)
-    return;
+    if (t_mmf_id >= t->t_mmf_id)
+        return;
 
-  for (e = list_begin (&t->mmf_list); e != list_end (&t->mmf_list); e = list_next (e))
-  {
-    mmf = list_entry (e, struct mmf, mmf_list_elem);
-    if (mmf->id == mapid)
-      break;
-  }
-  if (e == list_end (&t->mmf_list))
-    return;
-
-  upage = mmf->upage;
-
-  lock_acquire (&FileLock);
-  
-  off_t ofs;
-  for (ofs = 0; ofs < file_length (mmf->file); ofs += PGSIZE)
-  {
-    struct spte *entry = get_spte (&t->spt, upage);
-    if (pagedir_is_dirty (t->pagedir, upage))
-    {
-      void *kpage = pagedir_get_page (t->pagedir, upage);
-      file_write_at (entry->file, kpage, entry->read_bytes, entry->ofs);
+    for (e = list_begin(&t->mmf_list); e != list_end(&t->mmf_list); e = list_next(e)) {
+        mmf = list_entry(e, struct mmf, mmf_list_elem);
+        if (mmf->id == t_mmf_id)
+            break;
     }
-    page_delete (&t->spt, entry);
-    upage += PGSIZE;
-  }
-  list_remove(e);
+    if (e == list_end(&t->mmf_list))
+        return;
 
-  lock_release (&FileLock);
+    page_addr = mmf->page_addr;
+
+    lock_acquire(&FileLock);
+
+    off_t ofs;
+    for (ofs = 0; ofs < file_length(mmf->file); ofs += PGSIZE) {
+        struct spte *entry = get_spte(&t->spt, page_addr);
+        if (pagedir_is_dirty(t->pagedir, page_addr)) {
+            void *frame_addr = pagedir_get_page(t->pagedir, page_addr);
+            file_write_at(entry->file, frame_addr, entry->read_bytes, entry->ofs);
+        }
+        delete_and_free(&t->spt, entry);
+        page_addr += PGSIZE;
+    }
+    list_remove(e);
+
+    lock_release(&FileLock);
 }
 ```
 
@@ -860,7 +844,9 @@ void init_swap_valid_table()
 {
     swap_disk = block_get_role(BLOCK_SWAP);
     swap_valid_table = bitmap_create(block_size(swap_disk) / SECTOR_NUM);
+
     bitmap_set_all(swap_valid_table, true);
+    lock_init(&swapLock);
 }
 ```
 
@@ -871,7 +857,7 @@ void init_swap_valid_table()
 int
 main (void)
 {
-  // 여기서 init_swap_valid_table 함수 호출해야 됨 
+  init_swap_valid_table() 
 }
 ```
 
@@ -885,7 +871,7 @@ static struct lock swap_lock;
 void init_swap_valid_table()
 {
     ...
-    lock_init(&swap_lock);
+    lock_init(&swapLock);
 }
 ```
 
@@ -899,7 +885,7 @@ void swap_in(struct spte *page, void *kva)
     int i;
     int id = page->swap_id;
 
-    lock_acquire(&swap_lock);
+    lock_acquire(&swapLock);
     {
         if (id > bitmap_size(swap_valid_table) || id < 0)
         {
@@ -908,14 +894,14 @@ void swap_in(struct spte *page, void *kva)
 
         if (bitmap_test(swap_valid_table, id) == true)
         {
-            /* This swapping slot is empty. */
+            // This swapping slot is empty. 
             sys_exit(-1);
         }
 
         bitmap_set(swap_valid_table, id, true);
     }
 
-    lock_release(&swap_lock);
+    lock_release(&swapLock);
 
     for (i = 0; i < SECTOR_NUM; i++)
     {
@@ -954,11 +940,11 @@ int swap_out(void *kva)
     int i;
     int id;
 
-    lock_acquire(&swap_lock);
+    lock_acquire(&swapLock);
     {
         id = bitmap_scan_and_flip(swap_valid_table, 0, 1, true);
     }
-    lock_release(&swap_lock);
+    lock_release(&swapLock);
 
     for (i = 0; i < SECTOR_NUM; ++i)
     {
@@ -987,12 +973,12 @@ void *
 falloc_get_page(enum palloc_flags flags, void *upage)
 {
   ...
-  if (kpage == NULL)
+  if (frame_addr == NULL)
   {
-    evict_page(); // 이부분 추가! 
-    kpage = palloc_get_page (flags); 
-    if (kpage == NULL)
-      return NULL; 
+    evict_page(); 
+    frame_addr = palloc_get_page (flags);
+    if (frame_addr == NULL)
+      return NULL; // 그래도 안된다? -> NULL..
   }
   ...
 }
@@ -1003,30 +989,32 @@ falloc_get_page(enum palloc_flags flags, void *upage)
 
 ```
 void evict_page() {
-  ASSERT(lock_held_by_current_thread(&frame_lock));
+  ASSERT(lock_held_by_current_thread(&fTableLock));
 
   struct fte *e = clock_cursor;
   struct spte *s;
 
+  /* BEGIN: Find page to evict */
   do {
     if (e != NULL) {
-      pagedir_set_accessed(e->t->pagedir, e->upage, false);
+      pagedir_set_accessed(e->t->pagedir, e->page_addr, false);
     }
 
-    if (clock_cursor == NULL || list_next(&clock_cursor->list_elem) == list_end(&frame_table)) {
-      e = list_entry(list_begin(&frame_table), struct fte, list_elem);
+    if (clock_cursor == NULL || list_next(&clock_cursor->list_elem) == list_end(&frameTable)) {
+      e = list_entry(list_begin(&frameTable), struct fte, list_elem);
     } else {
       e = list_next (e);
     }
-  } while (!pagedir_is_accessed(e->t->pagedir, e->upage));
+  } while (!pagedir_is_accessed(e->t->pagedir, e->page_addr));
+  /*  END : Find page to evict */
 
-  s = get_spte(&thread_current()->spt, e->upage);
+  s = get_spte(&thread_current()->spt, e->page_addr);
   s->status = PAGE_SWAP;
-  s->swap_id = swap_out(e->kpage);
+  s->swap_id = swap_out(e->frame_addr);
 
-  lock_release(&frame_lock); {
-    falloc_free_page(e->kpage);
-  } lock_acquire(&frame_lock);
+  lock_release(&fTableLock); {
+    falloc_free_page(e->frame_addr);
+  } lock_acquire(&fTableLock);
 }
 ```
 
