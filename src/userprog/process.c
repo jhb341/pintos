@@ -576,7 +576,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *page_addr,
   return true;
 }
 
-/* Create a minimal stack by mapping a zeroed page at the top of
+/* Create a **minimal** stack by mapping a zeroed page at the top of
    user virtual memory. */
 static bool
 setup_stack (void **esp) 
@@ -594,8 +594,8 @@ setup_stack (void **esp)
         *esp = PHYS_BASE;
       }
       else{
-        //palloc_free_page (frame_addr);
-        falloc_free_page(frame_addr);
+        //palloc_free_page (frame_addr); // Old
+        falloc_free_page(frame_addr); // New
       }
     }
   return success;

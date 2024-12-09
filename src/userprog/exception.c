@@ -175,24 +175,51 @@ page_fault (struct intr_frame *f)
    그러니까, 0x12001부터는 할당될 수 있지만, pg align되어야 하니까 할당 못한다고 치는거임.
   */
 
-  if (is_kernel_vaddr (fault_addr) || !not_present) 
-    sys_exit (-1);
+  if (is_kernel_vaddr (fault_addr) || !not_present) {sys_exit (-1);}
   /*
    부정한 접근인 경우 종료함. 
+   즉, 접근이 커널로의 방향이거나, not_prsnt = false = 페이지는 있지만, access가 안되는 경우임!
   */
    
 
+   /*
+   이제 아래부터 해야하는것? 
+   -> fault_addr에 대한 대응을 해야됨
+   */
   spt = &thread_current()->spt;
+  /*
+  현재 스레드가 가지고 있는 page들의 목록을 모두 불러와서, 확장되기 직전 현재 가지고 있는 마지막 페이지의 주소를 가져옴.
+  그 주소에 해당하는 spte를 가져움
+  */
   spe = get_spte(spt, page_addr);
   /*
    현재 스레드의 spt의 page_addr에 해당하는 spte를 가져옴.
   */
 
-  esp = user ? f->esp : thread_current()->esp;
-  if (esp - 32 <= fault_addr && PHYS_BASE - MAX_STACK_SIZE <= fault_addr) {
-    if (!get_spte(spt, page_addr)) {
-      init_zero_spte (spt, page_addr);
-    }
+  //esp = user ? f->esp : thread_current()->esp;
+  if(user == true){
+      /* user process 에서 pg fault */
+      esp = f -> esp;
+  }else{
+      // from Kernel!
+      thread_current()->esp;
+  }
+
+
+  //if (esp - 32 <= fault_addr && PHYS_BASE - MAX_STACK_SIZE <= fault_addr) {
+  /*
+   stack은 high to low. 현재 esp - 32
+  */
+  bool isValidExtend = esp - STACK_BUFFER <= fault_addr && STACK_LIMIT <= fault_addr;
+  if (isValidExtend) {
+      // 유효한 확장 조건 하에서, (나중에 추가)
+    //if (!get_spte(spt, page_addr)) {
+      // 그런 page가 할당 못받았다면? 
+      // zeroing 후 gkfekd.
+      //init_zero_spte (spt, page_addr);
+    //}
+
+    init_zero_spte(spt, page_addr);
   }
 
   if (load_page (spt, page_addr)) {
@@ -201,6 +228,9 @@ page_fault (struct intr_frame *f)
   //
   // 
 
+   /*
+   중복: 부정접근의 경우 강종
+   */
   /* not now */
   if(not_present || is_kernel_vaddr(fault_addr) || !user){
    sys_exit(-1);
