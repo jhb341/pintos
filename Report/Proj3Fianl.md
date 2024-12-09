@@ -972,15 +972,28 @@ Swap-in과 Swap-out 각각의 동작을 다음과 같이 정의한다:
 ### 7. On process termination
 
 ### Implementation & Improvement from the previous design 
+```
+./userprog/process.c
+void
+process_exit (void)
+{
+ ...
+
+  for (i = 0; i < cur->mapid; i++){
+    sys_munmap (i);
+  }
+
+  
+  destroy_spt (&cur->spt); 
+
+  ...
+}
+```
 ### Difference from design report
 
-#### Blueprint (Proposal)
-
-##### Data Structure
+#### 디자인 레포트 (참고)
 
 `all_LockList`: 모든 lock을 관리하는 리스트 데이터 구조로, 생성된 lock을 추적하기 위해 global하게 선언한다. 이를 통해 acquire되거나 release된 모든 lock을 추적할 수 있다. 그리고, Lock 구조체의 필드에 list_elem을 추가하여 `all_LockList`에 연결할 수 있도록 한다. 그 외의 추가적인 구조체나 변수는 필요하지 않다.
-
-##### Pseudo Code or Algorithm
 
 - `release_frame_resources` : 현재 thread가 사용한 frame을 모두 해제한다. Frame table에서 해당 thread의 frame들을 제거한다.
 - `release_supplemental_page_table` : Thread에 연결된 supplemental page table 엔트리를 순회하며 모든 가상 메모리 매핑 정보를 삭제한다.
