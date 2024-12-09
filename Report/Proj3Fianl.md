@@ -14,29 +14,29 @@ frame table은 list 로 구현할 예정이며 각 list 에 들어갈 entry 를 
 ./vm/frame.h
 struct fte
   {
-    void *kpage;   
-    void *upage;  
-    struct thread *t; 
-    struct list_elem list_elem; 
+    void *frame_addr;    /* VA: Kernel virtual page. */
+    void *page_addr;    /* PA: User virtual page. */
+    struct thread *t;   /* 어떤 thread가 이 frame(그의 입장에서는 page겠지만,)을 소유하나? */
+    struct list_elem list_elem; /* 실제 fte가 연결되는 frame table(table은 list로 구현되므로)에 insert*/
   };
 ```
 
-frame table entry로는 kernel page (kpage), user page (upage), t (해당 fte 를 소유하는 thread), 그리고 list_elem (frame table 에 연결될 list) 로 구현하였다. 그리고 ./vm/frame.c 파일에서  frame table 과 관련된 변수와 함수를 선언하였다. 
+frame table entry로는 kernel page (frame_addr), user page (page_addr), t (해당 fte 를 소유하는 thread), 그리고 list_elem (frame table 에 연결될 list) 로 구현하였다. 그리고 ./vm/frame.c 파일에서  frame table 과 관련된 변수와 함수를 선언하였다. 
 
 ```
-static struct list frame_table; 
-static struct lock frame_lock; 
+static struct list frameTable; /* 프레임 테이블, 실제 fte 소유 주체 */
+static struct lock fTableLock;  /* frame table에 대한 atomic access를 구현 */
 ```
 
-먼저, 실제로 fte 들을 소유하는 frame_table 을 list 형태로 선언하였다. 그리고 frame table 이 작동할 때, atomic 할 수 있도록 frame_lock 이라는 lock 을 선언하였다. 
+먼저, 실제로 fte 들을 소유하는 frameTable 을 list 형태로 선언하였다. 그리고 frameTable이 작동할 때, atomic 할 수 있도록 fTableLock 이라는 lock 을 선언하였다. 
 
 ```
 // ./vm/frame.c
 void
-frame_init ()
+init_Lock_and_Table ()
 {
-  list_init (&frame_table);
-  lock_init (&frame_lock);
+  list_init (&frameTable);
+  lock_init (&fTableLock);
 }
 
 // ./thread/init.c
@@ -44,7 +44,7 @@ int
 main (void)
 {
   ...
-  frame_init();
+  init_Lock_and_Table();
   ...
 }
 ```
@@ -58,89 +58,106 @@ main (void)
 static bool
 setup_stack (void **esp) 
 {
-  ...
-  kpage = falloc_get_page(PAL_USER | PAL_ZERO, PHYS_BASE - PGSIZE);
-  if (kpage != NULL) 
+  uint8_t *frame_addr;
+  bool success = false;
+
+  //frame_addr = palloc_get_page (PAL_USER | PAL_ZERO);
+  frame_addr = falloc_get_page(PAL_USER | PAL_ZERO, PHYS_BASE - PGSIZE);
+  if (frame_addr != NULL) 
     {
-      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
+      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, frame_addr, true);
       if (success){
+        init_frame_spte(&thread_current()->spt, PHYS_BASE - PGSIZE, frame_addr);
         *esp = PHYS_BASE;
       }
       else{
-        falloc_free_page(kpage);
+        //palloc_free_page (frame_addr); // Old
+        falloc_free_page(frame_addr); // New
       }
     }
-   ...
+  return success;
 }
 ```
 
 위의 setup_stack 함수에서 기존에는 palloc 을 사용해서 kernel virtual page 를 생성했다면, 이제는 falloc 을 사용해서 할당 및 해제해주었다. falloc 관련 함수는 아래에서 설명할 예정이다. 
-(질문) 왜 이렇게 수정했는지 이유 추가 필요해보임 
+
+(질문) 왜 이렇게 수정했는지 이유 추가 필요해보임 (왜 palloc->falloc 하는지?) 
 
 ```
 void *
-falloc_get_page(enum palloc_flags flags, void *upage)
+falloc_get_page(enum palloc_flags flags, void *page_addr)
 {
-  struct fte *e;
-  void *kpage;
-
-  lock_acquire (&frame_lock);
-
-  kpage = palloc_get_page (flags);
-  if (kpage == NULL)
+  struct fte *e; // 임시로 fte를 만들어둔다.
+  void *frame_addr; // 임ㅅ
+  lock_acquire (&fTableLock); // table에 대한 접근은 atomic 하게
+  frame_addr = palloc_get_page (flags);
+  if (frame_addr == NULL)
   {
-    lock_release (&frame_lock);
-    return NULL;
+    /*
+    frame_addr = NULL 은, evict후 새로운 자리를 만들어야 함을 의미한다. 
+    물리 메모리가 부족해 페이지 요청이 실패한 경우이다. 
+     = need to SWAP! and EVICT
+    */
+    evict_page(); 
+    frame_addr = palloc_get_page (flags);
+    if (frame_addr == NULL)
+      return NULL; // 그래도 안된다? -> NULL..
   }
+  /* if문에 capture되지 않은 이상, 요청된 물리 페이지가 frame_addr에 저장됨 */
+  e = (struct fte *)malloc (sizeof *e); /* fte만큼 할당 */
 
-  e = (struct fte *)malloc (sizeof *e); 
-  e->kpage = kpage; 
-  e->upage = upage; 
-  e->t = thread_current (); 
-  list_push_back (&frame_table, &e->list_elem);
+  // 아래는 FTE initiallizing process.
+  e->frame_addr = frame_addr; /* 요청받은 frame_addr를 fte의 frame_addr로 설정 */
+  e->page_addr = page_addr; 
+  e->t = thread_current (); /* 현재 요청한 스레드가 마스터 스레드*/
 
-  lock_release (&frame_lock); 
-  return kpage;
+  // 마무리
+  list_push_back (&frameTable, &e->list_elem); /* 테이블에 인서트 */
+
+  lock_release (&fTableLock); 
+  return frame_addr; /* 해당 물리 페이지 반환 */
 }
 ```
 
-먼저, falloc 은 palloc 을 사용해 upage 에 translate 될 kpage 를 할당받는다. 그리고 frame table entry 를 malloc 을 사용해 할당한 뒤, 위에서 설명한 fte 의 각 element 를 할당하고, frame_table 에 list_push_back 을 이용해 추가해준다. 이때, frame_table 에 여러 thread 가 접근하는 것을 막기 위해  frame_lock 을 사용하여 atomic 하게 해당 과정이 이루어 질 수 있도록 하였다. 그리고 만약 palloc 이 실패한다면 lock release 를 해준 뒤 null 을 반환하도록 하였다. 성공한다면 새롭게 palloc 을 통해 할당된 kpage 를 반환해준다. 
+먼저, falloc 은 palloc 을 사용해 upage 에 translate 될 kpage 를 할당받는다. 그리고 frame table entry 를 malloc 을 사용해 할당한 뒤, 위에서 설명한 fte 의 각 element 를 할당하고, frameTable 에 list_push_back 을 이용해 추가해준다. 이때, frameTable 에 여러 thread 가 접근하는 것을 막기 위해  fTableLock 을 사용하여 atomic 하게 해당 과정이 이루어 질 수 있도록 하였다. 그리고 만약 palloc 이 실패한다면 lock release 를 해준 뒤 null 을 반환하도록 하였다. 성공한다면 새롭게 palloc 을 통해 할당된 kpage 를 반환해준다. 
 
 ```
 void
-falloc_free_page (void *kpage)
+falloc_free_page (void *frame_addr)
 {
   struct fte *e;
-  lock_acquire (&frame_lock);
+  lock_acquire (&fTableLock); // Make ATOMIC
+  e = getFte (frame_addr); // free할 PM의 fte를 찾는다. 
+  if (e == NULL) // 그런게 없으면, 
+    sys_exit (-1); // 시스엑싯
+  do_free_frame(e);
 
-  e = get_fte (kpage); 
-  if (e == NULL)
-    sys_exit (-1); 
+  lock_release (&fTableLock);
+}
 
-  list_remove (&e->list_elem); 
-  palloc_free_page (e->kpage); 
-  pagedir_clear_page (e->t->pagedir, e->upage); 
-  free (e);
-
-  lock_release (&frame_lock);
+void do_free_frame(struct fte *targetFTE)
+{
+    list_remove(&targetFTE -> list_elem);
+    palloc_free_page(targetFTE -> frame_addr);
+    pagedir_clear_page(targetFTE -> t -> pagedir, targetFTE -> page_addr);
+    free(targetFTE);
 }
 ```
 
-위의 setup_stack 함수에서 만약 install_page 가 실패하면 falloc 해준 kpage 를 free 해주어야한다. 위의 함수를 보면 먼저, kpage 를 갖는 frame table entry 를 찾아와 (get_fte 함수 호출), 먼저, list_elem 에서 remove 해준다. 그리고, palloc_free_page 함수를 사용해 해당 kpage 를 free 해주고, 마지막으로, pagedir_clear_page 함수를 통해 kpage -> upage 접근을 막도록 하였다. 마지막으로 fte 를 free 해주었다. 이때, frame_table 에 대한 atomic 접근을 보장하기 위해 frame_lock 을 사용하였다. 
-(질문) 왜 이렇게 수정했는지 이유 추가 필요해보임 
+위의 setup_stack 함수에서 만약 install_page 가 실패하면 falloc 해준 kpage 를 free 해주어야한다. 위의 함수를 보면 먼저, kpage 를 갖는 frame table entry 를 찾아와 (getFte 함수 호출), 먼저, list_elem 에서 remove 해준다. 그리고, palloc_free_page 함수를 사용해 해당 kpage 를 free 해주고, 마지막으로, pagedir_clear_page 함수를 통해 kpage -> upage 접근을 막도록 하였다. 마지막으로 fte 를 free 해주었다. 이때, frameTable 에 대한 atomic 접근을 보장하기 위해 fTableLock 을 사용하였다. 
 
 ```
 struct fte *
-get_fte (void* kpage)
+getFte (void* frame_addr)
 {
   struct list_elem *e;
-  for (e = list_begin (&frame_table); e != list_end (&frame_table); e = list_next (e))
-    if (list_entry (e, struct fte, list_elem)->kpage == kpage)
+  for (e = list_begin (&frameTable); e != list_end (&frameTable); e = list_next (e))
+    if (list_entry (e, struct fte, list_elem)->frame_addr == frame_addr)
       return list_entry (e, struct fte, list_elem);
   return NULL;
 }
 ```
-falloc_free_page 에서 사용한 get_fte 는 kpage 에 대응되는 frame table entry 를 반환하는 함수이다. for loop 를 이용해 frame_table 의 entry 를 하나씩 확인하며 대응되는 kpage 를 찾으면 해당 list_entry 를 반환하고, 만약 대응되는 kpage 가 없으면 NULL 을 반환한다.  
+falloc_free_page 에서 사용한 get_fte 는 kpage 에 대응되는 frame table entry 를 반환하는 함수이다. for loop 를 이용해 frameTable 의 entry 를 하나씩 확인하며 대응되는 kpage 를 찾으면 해당 list_entry 를 반환하고, 만약 대응되는 kpage 가 없으면 NULL 을 반환한다.  
 
 ### Difference from design report
 
@@ -156,14 +173,22 @@ lazy loading에 spte 가 사용되어서, supplemental page table 을 먼저 설
 // ./vm/page.h
 struct spte
   {
-    void *upage;
-    void *kpage;
-    struct hash_elem hash_elem;
+    void *frame_addr;  /* PA */
+    void *page_addr;   /* VA */
+  
+    struct hash_elem hash_elem;  // list_elem대신 hash_elem을 써야함
+  
     int status;
-    struct file *file;  
-    off_t ofs;  
-    uint32_t read_bytes, zero_bytes;  
-    bool writable; 
+        // 가능한 TYPE, prepare memory에서 처리
+        // PAGE_ZERO  : zeroing
+        // PAGE_FILE  : file 읽고 load
+        // PAGE_SWAP  : from swap disk
+
+    struct file *file;  // File to read.
+    off_t ofs;  // File off set.
+    uint32_t read_bytes, zero_bytes;  // Bytes to read or to set to zero.
+    bool isWritable;  // whether the page is writable.
+    int swap_id;
   };
 ```
 
@@ -192,7 +217,7 @@ thread_create (const char *name, int priority,
 
 ```
 static hash_hash_func spt_hash_func;
-static hash_less_func spt_less_func;
+static hash_less_func comp_spt_va;
 ```
 
 다음으로, ./vm/page.c 에서 supplemental page table 에 관한 함수와 변수들을 선언해주었다. 먼저, hash init 함수를 이용해 supplemental page table 을 초기화해주어야 하는데, 이때, hash_hash_func 과 hash_less_func 가 필요하여 먼저 선언해주었다. 
@@ -203,7 +228,7 @@ spt_hash_func (const struct hash_elem *elem, void *aux)
 {
   struct spte *p = hash_entry(elem, struct spte, hash_elem);
 
-  return hash_bytes (&p->upage, sizeof (p->kpage));
+  return hash_bytes (&p->page_addr, sizeof (p->frame_addr));
 }
 ```
 
@@ -211,51 +236,46 @@ spt_hash_func 함수는 인자로 받아오는 hash_elem 에 해당하는 hasg e
 
 ```
 static bool 
-spt_less_func (const struct hash_elem *a, const struct hash_elem *b, void *aux)
+comp_spt_va (const struct hash_elem *e1, const struct hash_elem *e2, void *aux)
 {
-  void *a_upage = hash_entry (a, struct spte, hash_elem)->upage;
-  void *b_upage = hash_entry (b, struct spte, hash_elem)->upage;
 
-  return a_upage < b_upage;
+  return hash_entry (e1, struct spte, hash_elem)->page_addr < hash_entry (e2, struct spte, hash_elem)->page_addr;
 }
 ```
 
-spt_less_func 함수는 hash table entry 를 비교하는 boolean 함수이다. 
+comp_spt_va 함수는 hash table entry 를 비교하는 boolean 함수이다. 
 
 ```
 void
 init_spt (struct hash *spt)
 {
-  hash_init (spt, spt_hash_func, spt_less_func, NULL);
+  hash_init (spt, spt_hash_func, comp_spt_va, NULL);
 }
 ```
 
 위의 두 함수를 사용해 hash_init 함수를 호출하여 init_spt 함수를 구현하였다. 
 
 ```
-static void page_destutcor (struct hash_elem *elem, void *aux);
+static void spte_free (struct hash_elem *elem, void *aux);
+
 static void
-page_destutcor (struct hash_elem *elem, void *aux)
+spte_free (struct hash_elem *e, void *aux)
 {
-  struct spte *e;
-
-  e = hash_entry (elem, struct spte, hash_elem);
-
-  free(e);
+  free(hash_entry (e, struct spte, hash_elem));
 }
 ```
 
-그리고 spt 를 delete 하는 함수가 필요하다. hash_destroy 함수 호출을 통해 구현하여야 하는데, 이때 page_destructor 에 해당하는 함수가 필요하여 추가적으로 구현하였다. 위에 보이는 page_destructor 함수는 인자로 넘겨준 elem 에 해당하는 hash entry 를 가져와 free 함수를 통해 해제시켜준다. 
+그리고 spt 를 delete 하는 함수가 필요하다. hash_destroy 함수 호출을 통해 구현하여야 하는데, 이때 spte_free 에 해당하는 함수가 필요하여 추가적으로 구현하였다. 위에 보이는 spte_free 함수는 인자로 넘겨준 elem 에 해당하는 hash entry 를 가져와 free 함수를 통해 해제시켜준다. 
 
 ```
 void
 destroy_spt (struct hash *spt)
 {
-  hash_destroy (spt, page_destutcor);
+  hash_destroy (spt, spte_free);
 }
 ```
 
-위에서 설명한 page_destructor 를 인자로 넘겨 hash_destroy 함수를 통해 supplemental page table 을 제거하는 함수를 구현하였다. 이렇게 supplemental page table 에 해당 구현을 하였고 아래의 함수들은 supplemental page table entry 와 관련된 함수들이다.
+위에서 설명한 spte_free 를 인자로 넘겨 hash_destroy 함수를 통해 supplemental page table 을 제거하는 함수를 구현하였다. 이렇게 supplemental page table 에 해당 구현을 하였고 아래의 함수들은 supplemental page table entry 와 관련된 함수들이다.
 
 ```
 #define PAGE_ZERO 0
@@ -270,18 +290,18 @@ destroy_spt (struct hash *spt)
 
 ```
 void
-init_zero_spte (struct hash *spt, void *upage)
+init_zero_spte (struct hash *spt, void *page_addr)
 {
   struct spte *e;
   e = (struct spte *) malloc (sizeof *e);
   
-  e->upage = upage;
-  e->kpage = NULL;
+  e->page_addr = page_addr;
+  e->frame_addr = NULL;
   
   e->status = PAGE_ZERO;
   
   e->file = NULL;
-  e->writable = true;
+  e->isWritable = true;
   
   hash_insert (spt, &e->hash_elem);
 }
@@ -291,18 +311,18 @@ init_zero_spte (struct hash *spt, void *upage)
 
 ```
 void
-init_frame_spte (struct hash *spt, void *upage, void *kpage)
+init_frame_spte (struct hash *spt, void *page_addr, void *frame_addr)
 {
   struct spte *e;
   e = (struct spte *) malloc (sizeof *e);
 
-  e->upage = upage;
-  e->kpage = kpage;
+  e->page_addr = page_addr;
+  e->frame_addr = frame_addr;
   
   e->status = PAGE_FRAME;
 
   e->file = NULL;
-  e->writable = true;
+  e->isWritable = true;
   
   hash_insert (spt, &e->hash_elem);
 }
@@ -312,20 +332,20 @@ init_frame_spte (struct hash *spt, void *upage, void *kpage)
 
 ```
 struct spte *
-init_file_spte (struct hash *spt, void *_upage, struct file *_file, off_t _ofs, uint32_t _read_bytes, uint32_t _zero_bytes, bool _writable)
+init_file_spte (struct hash *spt, void *_page_addr, struct file *_file, off_t _ofs, uint32_t _read_bytes, uint32_t _zero_bytes, bool _isWritable)
 {
   struct spte *e;
   
   e = (struct spte *)malloc (sizeof *e);
 
-  e->upage = _upage;
-  e->kpage = NULL;
+  e->page_addr = _page_addr;
+  e->frame_addr = NULL;
   
   e->file = _file;
   e->ofs = _ofs;
   e->read_bytes = _read_bytes;
   e->zero_bytes = _zero_bytes;
-  e->writable = _writable;
+  e->isWritable = _isWritable;
   
   e->status = PAGE_FILE;
   
@@ -339,31 +359,36 @@ PAGE_FILE 의 경우, 파일을 참조할 때 필요한 file, offset, bytes to r
 
 ```
 void
-init_spte (struct hash *spt, void *upage, void *kpage)
+init_spte (struct hash *spt, void *page_addr, void *frame_addr)
 {
   struct spte *e;
   e = (struct spte *) malloc (sizeof *e);
-  e->upage = upage;
-  e->kpage = kpage;
+  
+  e->page_addr = page_addr;
+  e->frame_addr = frame_addr;
+  
   e->status = PAGE_FRAME;
+  
   hash_insert (spt, &e->hash_elem);
 }
 ```
 
 먼저, init_spte 함수의 경우, spte 구조체를 malloc 을 사용해 새롭게 할당한 후, 인자로 받아온 kpage 와 upage 를 정의해준다. 그리고 supplemental page table 에 해당entry 를 hash_insert 를 이용해 추가해준다. 이때, status 는 PAGE_FRAME 으로 설정해준다. 
 
+(질문) 이 함수 사용하는지??? init_spte
+
 PAGE_SWAP 의 경우 아래의 swap 과정에서 다시 설명하도록 하겠다. 다음으로는 supplemental page table entry 를 삭제하는 과정이다. 
 
 ```
 void 
-page_delete (struct hash *spt, struct spte *entry)
+delete_and_free (struct hash *spt, struct spte *spte)
 {
-  hash_delete (spt, &entry->hash_elem);
-  free (entry);
+  hash_delete (spt, &spte->hash_elem);
+  free (spte);
 }
 ```
 
-위의 page_delete 함수를 보면 entry 에 해당하는 hash entry 를 spt (supplemental page table) 에서 hash_delete 함수 호출을 통해 삭제 해 준다. 그리고 해당 entry 를 free 해주었다. 
+위의 delete_and_free 함수를 보면 entry 에 해당하는 hash entry 를 spt (supplemental page table) 에서 hash_delete 함수 호출을 통해 삭제 해 준다. 그리고 해당 entry 를 free 해주었다. 
 
 이렇게 supplemental page table 과 그 entry 와 관련된 함수는 모두 구현하였다. 
 
@@ -373,13 +398,12 @@ static bool
 setup_stack (void **esp) 
 {
   ...
-      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
+      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, frame_addr, true);
       if (success){
-        init_frame_spte(&thread_current()->spt, PHYS_BASE - PGSIZE, kpage); // 이 부분 추가 
+        init_frame_spte(&thread_current()->spt, PHYS_BASE - PGSIZE, frame_addr);
         *esp = PHYS_BASE;
       }
-...
-}
+      ...
 ```
 
 setup_stack 함수에서 만약 install page 가 성공하면, init_frame_spte 함수를 실행하여 kpage 를 supplemental page table 에 등록해준다. 
@@ -388,9 +412,6 @@ setup_stack 함수에서 만약 install page 가 성공하면, init_frame_spte �
 ### Difference from design report
 
 디자인 레포트에서는 4 가지 status 에 대해서 생각하지 못하여 initiation 과정을 하나만 구상하였는데, 네 가지 다른 status 각각에 맞게 initiation 과정을 추가하였다. 그리고 hash 내부의 함수 사용이 미흡하여 supplemental page table 을 init 하고 delete 하는 함수 구현을 구상하지 못하였는데 supplemental page table entry 에 해당하는 함수를 구현하면서 추가해주었다. 
-
-(질문) 각 initiation 이랑 delete 함수가 어디서 사용되는지?? 
-
 
 ### 2. Lazy loading 
 
@@ -403,9 +424,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
               uint32_t read_bytes, uint32_t zero_bytes, bool writable) 
 {
   ...
-  while (read_bytes > 0 || zero_bytes > 0) 
-    {
-      init_file_spte (&thread_current()->spt, upage, file, ofs, page_read_bytes, page_zero_bytes, writable);
+  init_file_spte (&thread_current()->spt, page_addr, file, ofs, page_read_bytes, page_zero_bytes, writable);
   ...
 }
 ```
@@ -417,12 +436,49 @@ static void
 page_fault (struct intr_frame *f) 
 {
   ...
-  upage = pg_round_down (fault_addr);
-   
-  spt = &thread_current()->spt;
-  spe = get_spte(spt, upage);
+  page_addr = pg_round_down (fault_addr);
+  /*
+   fault가 발생한 VA(fault_addr)를 4KB로 round down하여 요구되는 pg의 시작주소 page_addr를 구한다.
+   = page_addr부터 pg fault가 발생함.
 
-  if (load_page (spt, upage)) {
+   예시) 0x12345에서 pg fault가 발생함 -> 0x12000부터 시작되어야 함.
+   그러니까, 0x12001부터는 할당될 수 있지만, pg align되어야 하니까 할당 못한다고 치는거임.
+  */
+
+  if (is_kernel_vaddr (fault_addr) || !not_present) {sys_exit (-1);}
+  /*
+   부정한 접근인 경우 종료함. 
+   즉, 접근이 커널로의 방향이거나, not_prsnt = false = 페이지는 있지만, access가 안되는 경우임!
+  */
+   
+
+   /*
+   이제 아래부터 해야하는것? 
+   -> fault_addr에 대한 대응을 해야됨
+   */
+  spt = &thread_current()->spt;
+  /*
+  현재 스레드가 가지고 있는 page들의 목록을 모두 불러와서, 확장되기 직전 현재 가지고 있는 마지막 페이지의 주소를 가져옴.
+  그 주소에 해당하는 spte를 가져움
+  */
+  spe = get_spte(spt, page_addr);
+  /*
+   현재 스레드의 spt의 page_addr에 해당하는 spte를 가져옴.
+  */
+
+  if(user == true){
+      esp = f -> esp;
+  }else{
+      // from Kernel!
+      thread_current()->esp;
+  }
+
+  bool isValidExtend = esp - STACK_BUFFER <= fault_addr && STACK_LIMIT <= fault_addr;
+  if (isValidExtend) {
+    init_zero_spte(spt, page_addr);
+  }
+
+  if (load_page (spt, page_addr)) {
      return;
   }
   ...
@@ -918,7 +974,7 @@ int swap_out(void *kva)
 ```
 ./vm/frame.c
 
-static struct fte *clock_cursor; 
+static struct fte *clock_cursor; /* fte에서 어떤 frame을 evict해야하나? (가르키는 대상이 fte이므로 type도 fte)*/
 
 void
 frame_init ()
