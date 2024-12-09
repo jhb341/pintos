@@ -26,7 +26,7 @@ void sys_close (int fd);
 
 // prjc3 mmf syscall function
 int sys_mmap(int fd, void *addr);
-int sys_munmap(int t_mmf_id);
+int sys_munmap(int mmfCnt);
 
 
 #endif /* userprog/syscall.h */

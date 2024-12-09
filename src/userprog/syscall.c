@@ -250,7 +250,7 @@ sys_mmap(int fd, void *addr) {
     }
 
     // 접근한 파일로 mmf 만들기
-    mmf = create_mmf(t->t_mmf_id++, opened_f, addr);
+    mmf = create_mmf(t->mmfCnt++, opened_f, addr);
     // 만약 이상하면 -1
     if (mmf == NULL) {
         lock_release(&FileLock);
@@ -265,18 +265,18 @@ sys_mmap(int fd, void *addr) {
 }
 
 int
-sys_munmap(int t_mmf_id) {
+sys_munmap(int mmfCnt) {
     struct thread *cur = thread_current();
     struct list_elem *e;
     struct mmf *mmf;
     void *page_addr;
 
-    if (t_mmf_id >= cur->t_mmf_id)
+    if (mmfCnt >= cur->mmfCnt)
         return;
 
     for (e = list_begin(&cur->mmf_list); e != list_end(&cur->mmf_list); e = list_next(e)) {
         mmf = list_entry(e, struct mmf, mmf_list_elem);
-        if (mmf->id == t_mmf_id)
+        if (mmf->id == mmfCnt)
             break;
     }
     if (e == list_end(&cur->mmf_list))

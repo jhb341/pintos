@@ -243,7 +243,7 @@ process_exit (void)
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
-  for(int i = 0; i < cur->t_mmf_id; i++){
+  for(int i = 0; i < cur->mmfCnt; i++){
     sys_munmap(i);
   }
 

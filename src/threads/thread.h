@@ -133,13 +133,13 @@ struct thread
     void *esp;
 
     struct list mmf_list; // 슬레이브 mmf 리스트
-    int t_mmf_id;            // 스레드 mmf id
+    int mmfCnt;            // 스레드 mmf id
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
   };
 
-   void thread_mmf_init(struct thread *t);
+void thread_mmf_init(struct thread *t);
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
@@ -178,7 +178,7 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 struct mmf *create_mmf (int mapping_id, struct file *f, void *start_addr);
-struct mmf * get_mmf (int t_mmf_id);
+struct mmf * get_mmf (int mmfCnt);
 int thread_get_load_avg (void);
 
 #endif /* threads/thread.h */

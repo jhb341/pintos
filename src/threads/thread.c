@@ -164,7 +164,7 @@ thread_userprog_init(struct thread *t)
 void thread_mmf_init(struct thread *t)
 {
   list_init (&t->mmf_list);
-  t->t_mmf_id = 0;   
+  t->mmfCnt = 0;   
 }
 
 /* Creates a new kernel thread named NAME with the given initial
@@ -460,10 +460,9 @@ create_mmf (int mapping_id, struct file *f, void *start_addr)
 
     /* 현재 스레드의 보조 페이지 테이블 접근 */
     struct hash *supp_page_table = &thread_current()->spt;
-    int file_len = file_length(f);
 
     /* 매핑하려는 영역에 이미 페이지가 있는지 확인 */
-    for (uint64_t offset = 0; offset < (uint64_t)file_len; offset += PGSIZE) {
+    for (uint64_t offset = 0; offset < (uint64_t)file_length(f); offset += PGSIZE) {
         if (get_spte(supp_page_table, (uint8_t *)start_addr + offset) != NULL) {
             /* 이미 페이지 엔트리가 존재하면 매핑 불가 */
             return NULL;
@@ -471,8 +470,8 @@ create_mmf (int mapping_id, struct file *f, void *start_addr)
     }
 
     /* 파일 전체를 페이지 단위로 매핑 */
-    for (uint64_t offset = 0; offset < (uint64_t)file_len; offset += PGSIZE) {
-        uint32_t bytes_to_read = (offset + PGSIZE < (uint64_t)file_len) ? PGSIZE : (file_len - offset);
+    for (uint64_t offset = 0; offset < (uint64_t)file_length(f); offset += PGSIZE) {
+        uint32_t bytes_to_read = (offset + PGSIZE < (uint64_t)file_length(f)) ? PGSIZE : (file_length(f) - offset);
         init_file_spte(supp_page_table, start_addr, f, offset, bytes_to_read, PGSIZE - bytes_to_read, true);
         start_addr = (uint8_t *)start_addr + PGSIZE; 
     }
@@ -486,7 +485,7 @@ create_mmf (int mapping_id, struct file *f, void *start_addr)
 
 
 struct mmf *
-get_mmf (int t_mmf_id)
+get_mmf (int mmfCnt)
 {
   struct list *list = &thread_current ()->mmf_list;
   struct list_elem *e;
@@ -494,7 +493,7 @@ get_mmf (int t_mmf_id)
   for (e = list_begin (list); e != list_end (list); e = list_next (e))
   {
     struct mmf *f = list_entry (e, struct mmf, mmf_list_elem);
-    if (f->id == t_mmf_id){return f;}
+    if (f->id == mmfCnt){return f;}
   }
 
   return NULL;
