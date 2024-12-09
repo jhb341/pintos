@@ -288,7 +288,7 @@ destroy_spt (struct hash *spt)
 
 ```
 void
-init_zero_spte (struct hash *spt, void *page_addr)
+init_spte_zero (struct hash *spt, void *page_addr)
 {
   struct spte *e;
   e = (struct spte *) malloc (sizeof *e);
@@ -309,7 +309,7 @@ init_zero_spte (struct hash *spt, void *page_addr)
 
 ```
 void
-init_frame_spte (struct hash *spt, void *page_addr, void *frame_addr)
+init_spte_frame (struct hash *spt, void *page_addr, void *frame_addr)
 {
   struct spte *e;
   e = (struct spte *) malloc (sizeof *e);
@@ -330,49 +330,29 @@ init_frame_spte (struct hash *spt, void *page_addr, void *frame_addr)
 
 ```
 struct spte *
-init_file_spte (struct hash *spt, void *_page_addr, struct file *_file, off_t _ofs, uint32_t _read_bytes, uint32_t _zero_bytes, bool _isWritable)
+init_spte_file(struct hash *s, void *_p, struct file *_f, off_t _o, uint32_t _r, uint32_t _z, bool _i)
 {
   struct spte *e;
   
   e = (struct spte *)malloc (sizeof *e);
 
-  e->page_addr = _page_addr;
+  e->page_addr = _p;
   e->frame_addr = NULL;
-  
-  e->file = _file;
-  e->ofs = _ofs;
-  e->read_bytes = _read_bytes;
-  e->zero_bytes = _zero_bytes;
-  e->isWritable = _isWritable;
+  e->file = _f;
+  e->ofs = _o;
+  e->read_bytes = _r;
+  e->zero_bytes = _z;
+  e->isWritable = _i;
   
   e->status = PAGE_FILE;
   
-  hash_insert (spt, &e->hash_elem);
+  hash_insert (s, &e->hash_elem);
   
   return e;
 }
 ```
 
 `PAGE_FILE`의 경우, 파일 참조를 위해 필요한 값들을 함수 인자로 받아 각각 할당한다. 해당 값에는 `file`, `offset`, `_read_bytes`, `_zero_bytes`, `isWritable` 등이 포함된다. 이 상태에서도 `frame_addr`는 매핑되지 않은 상태이므로, `NULL`로 설정한다.
-
-```
-void
-init_spte (struct hash *spt, void *page_addr, void *frame_addr)
-{
-  struct spte *e;
-  e = (struct spte *) malloc (sizeof *e);
-  
-  e->page_addr = page_addr;
-  e->frame_addr = frame_addr;
-  
-  e->status = PAGE_FRAME;
-  
-  hash_insert (spt, &e->hash_elem);
-}
-```
-
-(질문) 이 함수 사용하는지??? init_spte
-`init_spte` 함수는 `spte` 구조체를 `malloc`을 통해 동적으로 할당한 뒤, 인자로 전달받은 `frame_addr`와 `page_addr`를 구조체 필드에 설정한다. 이후, 생성된 엔트리를 `hash_insert` 함수를 이용해 `Supplemental Page Table`에 추가하며, 이때 `status`는 `PAGE_FRAME`으로 설정한다.
  
 `PAGE_SWAP` 상태는 6번에서 설명할 스왑 과정을 통해 다루도록 하겠다.  
 
