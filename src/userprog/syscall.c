@@ -310,7 +310,7 @@ sys_munmap(int mapid) {
             void *frame_addr = pagedir_get_page(t->pagedir, page_addr);
             file_write_at(entry->file, frame_addr, entry->read_bytes, entry->ofs);
         }
-        page_delete(&t->spt, entry);
+        delete_and_free(&t->spt, entry);
         page_addr += PGSIZE;
     }
     list_remove(e);

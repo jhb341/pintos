@@ -7,20 +7,20 @@
 #include "threads/vaddr.h"
 
 static hash_hash_func spt_hash_func;
-static hash_less_func spt_less_func;
-static void page_destutcor (struct hash_elem *elem, void *aux);
+static hash_less_func comp_spt_va;
+static void spte_free (struct hash_elem *elem, void *aux);
 extern struct lock FileLock;
 
 void
 init_spt (struct hash *spt)
 {
-  hash_init (spt, spt_hash_func, spt_less_func, NULL);
+  hash_init (spt, spt_hash_func, comp_spt_va, NULL);
 }
 
 void
 destroy_spt (struct hash *spt)
 {
-  hash_destroy (spt, page_destutcor);
+  hash_destroy (spt, spte_free);
 }
 
 void
@@ -49,7 +49,7 @@ init_zero_spte (struct hash *spt, void *page_addr)
   e->status = PAGE_ZERO;
   
   e->file = NULL;
-  e->writable = true;
+  e->isWritable = true;
   
   hash_insert (spt, &e->hash_elem);
 }
@@ -66,13 +66,13 @@ init_frame_spte (struct hash *spt, void *page_addr, void *frame_addr)
   e->status = PAGE_FRAME;
 
   e->file = NULL;
-  e->writable = true;
+  e->isWritable = true;
   
   hash_insert (spt, &e->hash_elem);
 }
 
 struct spte *
-init_file_spte (struct hash *spt, void *_page_addr, struct file *_file, off_t _ofs, uint32_t _read_bytes, uint32_t _zero_bytes, bool _writable)
+init_file_spte (struct hash *spt, void *_page_addr, struct file *_file, off_t _ofs, uint32_t _read_bytes, uint32_t _zero_bytes, bool _isWritable)
 {
   struct spte *e;
   
@@ -85,7 +85,7 @@ init_file_spte (struct hash *spt, void *_page_addr, struct file *_file, off_t _o
   e->ofs = _ofs;
   e->read_bytes = _read_bytes;
   e->zero_bytes = _zero_bytes;
-  e->writable = _writable;
+  e->isWritable = _isWritable;
   
   e->status = PAGE_FILE;
   
@@ -93,6 +93,40 @@ init_file_spte (struct hash *spt, void *_page_addr, struct file *_file, off_t _o
   
   return e;
 }
+
+void prepare_mem_page(struct spte *spte, void *frame_addr, bool flag)
+{
+  switch (spte->status)
+  {
+  case PAGE_ZERO:
+    memset (frame_addr, 0, PGSIZE);
+    break;
+  case PAGE_SWAP:
+    swap_in(spte, frame_addr);
+    break;
+  case PAGE_FILE:
+    if (!flag)
+      lock_acquire (&FileLock);
+    
+    if (file_read_at (spte->file, frame_addr, spte->read_bytes, spte->ofs) != spte->read_bytes)
+    {
+      falloc_free_page (frame_addr);
+      lock_release (&FileLock);
+      sys_exit (-1);
+    }
+    memset (frame_addr + spte->read_bytes, 0, spte->zero_bytes);
+    if (!flag)
+      lock_release (&FileLock);
+
+    break;
+
+  default:
+    sys_exit (-1);
+  }
+
+}
+
+
 
 /*
     page의 lazy한 load를 구현함. 
@@ -108,48 +142,18 @@ load_page (struct hash *spt, void *page_addr)
   void *frame_addr;
 
   e = get_spte (spt, page_addr);
-  if (e == NULL)
-    sys_exit (-1);
+  if (e == NULL){ sys_exit (-1); }
 
   frame_addr = falloc_get_page (PAL_USER, page_addr);
-  if (frame_addr == NULL)
-    sys_exit (-1);
+  if (frame_addr == NULL){ sys_exit (-1); }
 
   bool was_holding_lock = lock_held_by_current_thread (&FileLock);
 
-  switch (e->status)
-  {
-  case PAGE_ZERO:
-    memset (frame_addr, 0, PGSIZE);
-    break;
-  case PAGE_SWAP:
-    swap_in(e, frame_addr);
-  
-    break;
-  case PAGE_FILE:
-    if (!was_holding_lock)
-      lock_acquire (&FileLock);
-    
-    if (file_read_at (e->file, frame_addr, e->read_bytes, e->ofs) != e->read_bytes)
-    {
-      falloc_free_page (frame_addr);
-      lock_release (&FileLock);
-      sys_exit (-1);
-    }
-    
-    memset (frame_addr + e->read_bytes, 0, e->zero_bytes);
-    if (!was_holding_lock)
-      lock_release (&FileLock);
-
-    break;
-
-  default:
-    sys_exit (-1);
-  }
+  prepare_mem_page(e, frame_addr, was_holding_lock);
     
   pagedir = thread_current ()->pagedir;
 
-  if (!pagedir_set_page (pagedir, page_addr, frame_addr, e->writable))
+  if (!pagedir_set_page (pagedir, page_addr, frame_addr, e->isWritable))
   {
     falloc_free_page (frame_addr);
     sys_exit (-1);
@@ -182,27 +186,33 @@ spt_hash_func (const struct hash_elem *elem, void *aux)
 }
 
 static bool 
-spt_less_func (const struct hash_elem *a, const struct hash_elem *b, void *aux)
+comp_spt_va (const struct hash_elem *e1, const struct hash_elem *e2, void *aux)
 {
-  void *a_page_addr = hash_entry (a, struct spte, hash_elem)->page_addr;
-  void *b_page_addr = hash_entry (b, struct spte, hash_elem)->page_addr;
+  /*  
+  void *a_page_addr = hash_entry (e1, struct spte, hash_elem)->page_addr;
+  void *b_page_addr = hash_entry (e2, struct spte, hash_elem)->page_addr;
 
   return a_page_addr < b_page_addr;
+  */
+
+  return hash_entry (e1, struct spte, hash_elem)->page_addr < hash_entry (e2, struct spte, hash_elem)->page_addr;
 }
 
 static void
-page_destutcor (struct hash_elem *elem, void *aux)
+spte_free (struct hash_elem *e, void *aux)
 {
-  struct spte *e;
+  //struct spte *e;
 
-  e = hash_entry (elem, struct spte, hash_elem);
+  //e = hash_entry (e, struct spte, hash_elem);
 
-  free(e);
+  //free(e);
+
+  free(hash_entry (e, struct spte, hash_elem));
 }
 
 void 
-page_delete (struct hash *spt, struct spte *entry)
+delete_and_free (struct hash *spt, struct spte *spte)
 {
-  hash_delete (spt, &entry->hash_elem);
-  free (entry);
+  hash_delete (spt, &spte->hash_elem);
+  free (spte);
 }
