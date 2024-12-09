@@ -671,29 +671,6 @@ struct mmf *init_mmf (int id, struct file *file, void *page_addr)
 `mmf` 초기화를 위해 `init_mmf` 함수를 구현하였다. 이 함수는 `malloc`을 통해 `mmf`를 동적으로 할당한 후, 인자로 전달받은 `id`, `file`, `page_addr`를 초기화한다. 첫 번째 `for` 루프를 사용해 파일이 이미 매핑되어 있는지 확인하며, 중복 매핑이 발견되면 `NULL`을 반환한다. 두 번째 `for` 루프에서는 파일의 각 페이지를 `Supplemental Page Table`에 추가한다. 이때 `init_file_spte`를 호출해 페이지를 초기화하고 Supplemental Page Table에 등록한다. 마지막으로 생성된 `mmf`를 스레드의 `mmf_list`에 추가한다.
 
 ```
-// ./threads/thread.c
-
-struct mmf *
-get_mmf (int t_mmf_id)
-{
-  struct list *list = &thread_current ()->mmf_list;
-  struct list_elem *e;
-
-  for (e = list_begin (list); e != list_end (list); e = list_next (e))
-  {
-    struct mmf *f = list_entry (e, struct mmf, mmf_list_elem);
-
-    if (f->id == t_mmf_id)
-      return f;
-  }
-
-  return NULL;
-}
-```
-
-(질문) 이거 어디서 씀?? 
-
-```
 // ./userprog/syscall.c
 
 static void
