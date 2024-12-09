@@ -231,26 +231,28 @@ void sys_close(int fd)
 
 int
 sys_mmap(int fd, void *addr) {
-    struct thread *t = thread_current();
-    struct file *f = t->fileTable[fd];
-    struct file *opened_f;
+    struct thread *cur = thread_current();
     struct mmf *mmf;
+    struct file *file_thread = cur -> fileTable[fd];
+    struct file *file_access;
+
 
     // 부정한 접근?
-    if(f == NULL || addr == NULL || (int) addr % PGSIZE != 0){return -1;}
+    bool invalid_access = file_thread == NULL || addr == NULL || (int) addr % PGSIZE != 0;
+    if(invalid_access){return -1;}
 
     // 작업 시작할거니까 락어콰이어
     lock_acquire(&FileLock);
 
     // 파일 열었는데 없으면 -1
-    opened_f = file_reopen(f);
-    if (opened_f == NULL) {
+    file_access = file_reopen(file_thread);
+    if (file_access == NULL) {
         lock_release(&FileLock);
         return -1;
     }
 
     // 접근한 파일로 mmf 만들기
-    mmf = create_mmf(t->mmfCnt++, opened_f, addr);
+    mmf = create_mmf(cur->mmfCnt++, file_access, addr);
     // 만약 이상하면 -1
     if (mmf == NULL) {
         lock_release(&FileLock);
@@ -296,8 +298,9 @@ sys_munmap(int mmfCnt) {
         delete_and_free(&cur->spt, entry);
         page_addr += PGSIZE;
     }
-    list_remove(e);
 
+    
+    list_remove(e);
     lock_release(&FileLock);
 }
 

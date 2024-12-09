@@ -487,10 +487,12 @@ create_mmf (int mapping_id, struct file *f, void *start_addr)
 struct mmf *
 get_mmf (int mmfCnt)
 {
-  struct list *list = &thread_current ()->mmf_list;
+  struct list *l = &thread_current () -> mmf_list;
   struct list_elem *e;
+  struct list_elem *IterStart = list_begin (l);
+  struct list_elem *IterEnd = list_end (l);
 
-  for (e = list_begin (list); e != list_end (list); e = list_next (e))
+  for (e = IterStart; e != IterEnd; e = list_next (e))
   {
     struct mmf *f = list_entry (e, struct mmf, mmf_list_elem);
     if (f->id == mmfCnt){return f;}
