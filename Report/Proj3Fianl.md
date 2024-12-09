@@ -787,6 +787,44 @@ sys_munmap (int mapid)
 ### Implementation & Improvement from the previous design 
 
 ```
+// ./vm/swap.c
+
+static struct bitmap *swap_valid_table;
+static struct block *swap_disk;
+```
+
+swap_valid_table 을 bitmap 형식으로 선언하여 swap 할 공간을 효율적으로 찾을 수 있도록 하였다. 0 이면 swap in 가능, 1 이면 swap out 이 가능하도록 아래에서 구현하였다. 그리고 해당 block 에 read/write 과정이 필요하기 때문에 block 포인터로 swap_disk 를 추가하였다. 
+
+```
+// ./vm/swap.c
+
+#define SECTOR_NUM (PGSIZE / BLOCK_SECTOR_SIZE)
+
+void init_swap_valid_table()
+{
+    swap_disk = block_get_role(BLOCK_SWAP);
+    swap_valid_table = bitmap_create(block_size(swap_disk) / SECTOR_NUM);
+    bitmap_set_all(swap_valid_table, true);
+}
+```
+
+그리고 위의 bitmap 을 활성화 시키기 위해서 init_swap_valid_table 함수를 추가하였다. 먼저 block_get_role 함수 호출을 통해서 여러 블록 중 swap 될 블락 하나를 swap_block 변수에 저장해주었다. 그리고 bitmap_create 함수를 통해 swap_valid_table 를 활성화시켜주었다. 이때 bitmap 의 크기는 swap_table 의 크기를 SECTOR_NUM 으로 나눈 값을 갖도록 하였다. 그리고 bitmap_set_all 함수를 호출하여 모두 true 값, 즉, swap out 이 가능한 상태로 설정해주었다. 
+
+
+```
+// ./vm/swap.c
+
+static struct lock swap_lock;
+
+void init_swap_valid_table()
+{
+    ...
+    lock_init(&swap_lock);
+}
+```
+```
+
+```
 ./vm/frame.c
 
 static struct fte *clock_cursor; 
@@ -846,24 +884,9 @@ void evict_page() {
 }
 ```
 
+
 ```
-#include "vm/swap.h"
-#include "threads/synch.h"
-
-#define SECTOR_NUM (PGSIZE / BLOCK_SECTOR_SIZE)
-
-static struct bitmap *swap_valid_table; /* 디스크와 대응됨 */
-static struct block *swap_disk;
-static struct lock swap_lock;
-
-void init_swap_valid_table()
-{
-    swap_disk = block_get_role(BLOCK_SWAP);
-    swap_valid_table = bitmap_create(block_size(swap_disk) / SECTOR_NUM);
-
-    bitmap_set_all(swap_valid_table, true);
-    lock_init(&swap_lock);
-}
+// ./vm/swap.c
 
 void swap_in(struct spte *page, void *kva)
 {
@@ -893,6 +916,10 @@ void swap_in(struct spte *page, void *kva)
         block_read(swap_disk, id * SECTOR_NUM + i, kva + (i * BLOCK_SECTOR_SIZE));
     }
 }
+```
+
+```
+// ./vm/swap.c
 
 int swap_out(void *kva)
 {
