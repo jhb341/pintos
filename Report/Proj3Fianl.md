@@ -491,7 +491,7 @@ load_page (struct hash *spt, void *upage)
 }
 ```
 
-page fault 가 났기 때문에 kpage (kernel page) 를 falloc 을 통해 새롭게 할당해준다. 그리고 switch case 를 사용하여 각 상황 (PAGE_ZERO, PAGE_SWAP, 그리고 PAGE_FILE) 각각에 대해서 처리해준다. 먼저, PAGE_ZERO 의 경우 memset 함수를 통해 해당 메모리를 0으로 초기화해준다. 그리고, PAGE_SWAP 의 경우 
+page fault 가 났기 때문에 kpage (kernel page) 를 falloc 을 통해 새롭게 할당해준다. 그리고 switch case 를 사용하여 각 상황 (PAGE_ZERO, PAGE_SWAP, 그리고 PAGE_FILE) 각각에 대해서 처리해준다. 먼저, PAGE_ZERO 의 경우 memset 함수를 통해 해당 메모리를 0으로 초기화해준다. 그리고, PAGE_SWAP 의 경우 아래에서 설명할 swap table 과정을 통해 구현하여 아래에서 설명할 예정이다. 마지막으로 PAGE_FILE의 경우, file_read_at 함수를 통해 파일에서 데이터를 읽어와서 추가하고 memset 을 통해 나머지 영역을 0으로 초기화해주는 함수를 추가해주었다. 이때, 여러 process 에서 파일에 접근하는 것을 막기 위해서 file_lock 을 사용해 atomic 하게 구현하였다. 마지막으로, 새롭게 가져온 데이터를 기반으로 page directory 를 설정하고, supplemental page table entry 도 업데이트 해주었다.  
 
 ```
 struct spte *
@@ -507,33 +507,12 @@ get_spte (struct hash *spt, void *upage)
 }
 ```
 
+위에서 supplemental page table entry 를 가져오기 위해서 위에 보이는 get_spte 함수를 사용하였다. get_spte 함수는 upage 를 인자로 받아와 이에 해당하는 hash table entry 를 반환해주는 역할을 한다.  
+
 
 ### Difference from design report
 
-#### Blueprint (Proposal)
-
-##### Data Structure
-
-Lazy loading이 가능하다는 것은 언제 어떤 page가 필요한지 관리할 수 있음을 의미하며, 이는 각 page의 정보를 추적할 수 있는 데이터 구조가 필요함을 뜻한다. 각 page의 정보를 저장하는 구조체는 아래와 같다.  
-
-```
-struct page_table {
-    struct file *f;       // 해당 page가 속한 파일
-    off_t pte_fo;         // 파일 offset
-    bool isWritable;      // 쓰기 가능 여부
-};
-```
-
-정리하자면, `page_table` 구조체는 해당 page가 어느 file의 일부인지, file 내의 offset, 그리고 쓰기 가능 여부와 같은 정보를 저장한다.  
-
-##### Pseudo Code or Algorithm
-
-Lazy loading은 page fault 발생 시 시작된다. page fault가 발생했을 때, fault가 난 가상 메모리 주소가 물리 메모리에 이미 load되어 있다면 그대로 반환한다. 그렇지 않은 경우 해당 페이지를 physical memory에 load한다. 이 과정이 lazy loading이며, 일종의 fault handler이다.  
-
-페이지 데이터를 가져오는 출처는 page의 type에 따라 다르다. 예를들어 일부 경우는 swap 영역에서 데이터를 가져오고, 그 외의 경우 disk에서 file을 load한다. swap 영역에서의 동작에 대해서는 6번에서 자세히 설명하였다. 이 과정은 disk에서 데이터를 읽어오는 함수와 swap하는 함수를 호출하여 physical memory로의 load를 수행한다.  
-
-- `load_page_from_disk`: disk에서 file 데이터를 load하는 함수  
-- `swap_page`: swap 영역에서 데이터를 가져오는 함수 (6번에서 추가 설명)  
+기존에는 supplemental page table 구조체를 구현하기 전에 lazy loading 을 구현하는 방법에 대해 구상하였어서 page_table 이라는 구조체를 따로 만들었으나 supplemental page table 을 이용해 구현하는 방식으로 수정하였다. 그리고, 디자인 레포트에서는 PAGE_FILE 과 PAGE_SWAP 의 경우만 구상하였는데 구현하면서 PAGE_ZERO 에 해당하는 구현을 추가해주었다.   
 
 
 ### 4. Stack growth
@@ -544,6 +523,7 @@ Lazy loading은 page fault 발생 시 시작된다. page fault가 발생했을 �
 static void
 page_fault (struct intr_frame *f) 
 {
+  ...
   upage = pg_round_down (fault_addr);
    
   spt = &thread_current()->spt;
@@ -555,13 +535,7 @@ page_fault (struct intr_frame *f)
       init_zero_spte (spt, upage);
     }
   }
-
-  if (load_page (spt, upage)) {
-     return;
-  }
-  if(not_present || is_kernel_vaddr(fault_addr) || !user){
-   sys_exit(-1);
-  }
+  ...
 ```
 
 ### Difference from design report
