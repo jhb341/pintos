@@ -12,8 +12,8 @@
 */
 struct fte
   {
-    void *kpage;    /* Kernel virtual page.  */
-    void *upage;    /* User virtual page. */
+    void *kpage;    /* VA: Kernel virtual page. */
+    void *upage;    /* PA: User virtual page. */
 
     struct thread *t;   /* 어떤 thread가 이 frame(그의 입장에서는 page겠지만,)을 소유하나? */
 
@@ -22,7 +22,7 @@ struct fte
 
 void frame_init (void);
 void *falloc_get_page(enum palloc_flags, void *);
-void  falloc_free_page (void *);
-struct fte *get_fte (void* );
+void  falloc_free_page (void *); 
+struct fte *get_fte (void* );   // fte의 pointer를 qksghks
 
 #endif

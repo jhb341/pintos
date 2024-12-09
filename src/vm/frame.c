@@ -2,7 +2,7 @@
 #include "threads/synch.h"
 #include "vm/swap.h"
 
-static struct list frame_table; /* 실제 fte 소유 주체 */
+static struct list frame_table; /* 프레임 테이블, 실제 fte 소유 주체 */
 static struct lock frame_lock;  /* frame table에 대한 atomic access를 구현 */
 static struct fte *clock_cursor; /* fte에서 어떤 frame을 evict해야하나? (가르키는 대상이 fte이므로 type도 fte)*/
 
@@ -36,8 +36,8 @@ frame_init ()
 void *
 falloc_get_page(enum palloc_flags flags, void *upage)
 {
-  struct fte *e;
-  void *kpage;
+  struct fte *e; // 임시로 fte를 만들어둔다.
+  void *kpage; // 임ㅅ
   lock_acquire (&frame_lock); // table에 대한 접근은 atomic 하게
   kpage = palloc_get_page (flags);
   if (kpage == NULL)

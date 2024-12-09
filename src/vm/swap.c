@@ -16,6 +16,7 @@ void init_swap_valid_table()
     lock_init(&swap_lock);
 }
 
+
 void swap_in(struct spte *page, void *kva)
 {
     int i;
@@ -30,7 +31,7 @@ void swap_in(struct spte *page, void *kva)
 
         if (bitmap_test(swap_valid_table, id) == true)
         {
-            /* This swapping slot is empty. */
+            // This swapping slot is empty. 
             sys_exit(-1);
         }
 
@@ -63,3 +64,4 @@ int swap_out(void *kva)
 
     return id;
 }
+
